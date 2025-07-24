@@ -58,6 +58,12 @@ function generateRandomColor() {
 
 // Helper function to get nickname and color from UID
 async function getNicknameByUid(uid) {
+    // UID'nin geçerli bir string olup olmadığını kontrol et
+    if (typeof uid !== 'string' || !uid) {
+        console.warn("getNicknameByUid: Geçersiz UID sağlandı:", uid);
+        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Geçersiz UID durumunda varsayılan dön
+    }
+
     if (uidToNicknameMap[uid]) {
         return uidToNicknameMap[uid];
     }
@@ -74,6 +80,10 @@ async function getNicknameByUid(uid) {
 
             uidToNicknameMap[uid] = { nickname, color };
             return { nickname, color };
+        } else {
+            // Kullanıcı belgesi Firestore'da yoksa
+            console.warn("getNicknameByUid: Kullanıcı belgesi bulunamadı:", uid);
+            return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
         }
     } catch (error) {
         console.error("Kullanıcı takma adı veya renk alınamadı:", error);

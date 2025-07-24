@@ -121,6 +121,12 @@ function generateRandomColor() {
 
 
 async function getNicknameByUid(uid) {
+    // UID'nin geçerli bir string olup olmadığını kontrol et
+    if (typeof uid !== 'string' || !uid) {
+        console.warn("getNicknameByUid: Geçersiz UID sağlandı:", uid);
+        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Geçersiz UID durumunda varsayılan dön
+    }
+
     if (uidToNicknameMap[uid]) {
         return uidToNicknameMap[uid]; // Cache'den dön
     }
@@ -138,23 +144,15 @@ async function getNicknameByUid(uid) {
 
             uidToNicknameMap[uid] = { nickname, color }; // Cache'e objeyi ekle
             return { nickname, color };
+        } else {
+            // Kullanıcı belgesi Firestore'da yoksa (ancak UID geçerliyse)
+            console.warn("getNicknameByUid: Kullanıcı belgesi bulunamadı:", uid);
+            return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Varsayılan dön
         }
     } catch (error) {
         console.error("Kullanıcı takma adı veya renk alınamadı:", error);
+        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Hata durumunda varsayılan dön
     }
-    return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Takma ad bulunamazsa varsayılan
-}
-
-function formatDateTime(timestamp) {
-    if (!timestamp) return "";
-    const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp); // Firestore Timestamp veya Date objesi
-    return d.toLocaleString("tr-TR", {
-        year: "2-digit",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit"
-    });
 }
 
 function getTotalReactions(msg) {
