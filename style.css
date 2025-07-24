@@ -1,0 +1,194 @@
+body {
+    margin: 0;
+    font-family: 'Segoe UI', sans-serif;
+    background-color: #121212;
+    color: #fff;
+    transition: background-color 0.3s, color 0.3s;
+}
+body.light {
+    background-color: #f0f0f0;
+    color: #111;
+}
+
+input, textarea {
+    width: 100%;
+    padding: 10px;
+    margin: 5px 0;
+    border: none;
+    border-radius: 6px;
+}
+textarea {
+    resize: vertical;
+}
+button {
+    padding: 10px 16px;
+    margin-top: 5px;
+    cursor: pointer;
+    background-color: #6200ee;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+}
+button:hover {
+    background-color: #3700b3;
+}
+.top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 10px 0;
+}
+.message {
+    background: #1e1e1e;
+    margin: 10px 0;
+    padding: 10px;
+    border-radius: 6px;
+}
+body.light .message {
+    background: #fff;
+}
+.reactions button {
+    margin-right: 5px;
+}
+.highlight-box {
+    background: #333;
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+}
+.features {
+    margin: 10px 0;
+}
+
+/* YENİ EKLENECEK CSS KURALLARI */
+
+body.dark .text-muted {
+    color: #adb5bd !important;
+}
+body.light .text-muted {
+    color: #6c757d !important;
+}
+
+#message-list, #answers-list, #top-messages-list {
+    border: 1px solid #444;
+    background-color: #2a2a2a;
+}
+body.light #message-list, body.light #answers-list, body.light #top-messages-list {
+    border: 1px solid #dee2e6;
+    background-color: #f8f9fa;
+}
+
+.message, .reply-message {
+    background-color: #333;
+}
+body.light .message, body.light .reply-message {
+    background-color: #e9ecef;
+}
+
+/* Haykırma kutusunun stili - Artık 'fixed' değil, bu nedenle konumlandırma kuralları kaldırıldı */
+#shout-section {
+    background-color: #0d6efd !important;
+    color: white !important;
+    padding: 10px 15px !important;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    /* bottom, left, width, z-index, position gibi fixed ile ilgili kurallar kaldırıldı */
+    /* Eğer bu bölümde de bir yükseklik kısıtlaması varsa onu da kontrol edin */
+}
+
+body.light #shout-section {
+    background-color: #6c757d !important;
+    color: white !important;
+}
+
+/* Fixed elementler için genel kapsayıcı */
+.fixed-bottom-elements {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1000;
+    background-color: rgba(18, 18, 18, 0.9);
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.5);
+    padding-bottom: env(safe-area-inset-bottom); /* iPhone notch gibi güvenli alanlar için */
+}
+
+body.light .fixed-bottom-elements {
+    background-color: rgba(240, 240, 240, 0.9);
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+}
+
+/* Mesaj yazma alanı - Bu hala sabit kalacak */
+#message-input-container {
+    bottom: 80px; /* .fixed-bottom-elements'in yüksekliği + biraz boşluk */
+    right: 20px;
+    z-index: 1001;
+    background-color: #2a2a2a;
+    transition: bottom 0.3s ease-in-out;
+}
+body.light #message-input-container {
+    background-color: #f8f9fa;
+}
+
+#shout-text-display {
+    min-height: 40px;
+    max-height: 150px; /* Ya da istediğiniz daha büyük bir değer. Örneğin 150px veya 200px. */
+    overflow-y: auto; /* İçerik taşarsa dikey kaydırma çubuğu çıksın */
+    white-space: pre-wrap; /* Metin otomatik olarak satır atlasın */
+    word-break: break-word; /* Uzun kelimeler de satır atlasın */
+    text-overflow: clip; /* Ellipsis'i kaldır, metin olduğu gibi görünsün */
+    width: 100%;
+    line-height: 1.5;
+    padding: 5px; /* İçerik ile kenar arasında boşluk */
+    /* Diğer stil özellikleriniz (background, color, font-size vb.) kalabilir */
+}
+
+/* Media Query'ler - Shout section artık fixed olmadığı için buradaki kurallar da kaldırıldı */
+/* Sadece .fixed-bottom-elements ve #message-input-container için mobil ayarları kaldı */
+@media (max-width: 767.98px) {
+    /* Mobil'de haykır butonu görünür kalacak ama ana akışta olacak */
+    /* Bu kurallar artık gerekmiyor çünkü #shout-section fixed değil */
+    /* #shout-section {
+        bottom: 80px;
+        left: 20px;
+        width: calc(100% - 40px);
+        min-height: auto;
+        padding: 5px 10px !important;
+    } */
+
+    #message-input-container {
+        width: calc(100% - 40px) !important;
+        right: 20px;
+        left: 20px;
+        bottom: 80px !important;
+    }
+
+    /* .fixed-bottom-elements içindeki butonlar için */
+    .fixed-bottom-elements button {
+        flex-grow: 1; /* Mobil'de her iki buton da eşit genişlikte olsun */
+    }
+}
+
+/* Masaüstü görünümde (>= 768px) */
+@media (min-width: 768px) {
+    /* #shout-section artık fixed olmadığı için bu kurallar da kaldırıldı */
+    /* #shout-section {
+        bottom: 20px;
+        left: 20px;
+        width: 250px;
+    } */
+    #message-input-container {
+        bottom: 20px !important; /* Masaüstünde butonların altında kalabilir */
+    }
+    .fixed-bottom-elements button {
+        flex-grow: 0; /* Masaüstünde kendi boyutlarında kalsınlar */
+    }
+}
+
+.d-none-important {
+    display: none !important;
+}
