@@ -95,6 +95,21 @@ let shoutInterval = null;
 let currentDailyQuestion = null;
 const uidToNicknameMap = {}; // UID'leri nickname ve renk objelerine eşlemek için cache
 
+function formatDateTime(timestamp) {
+    if (!timestamp) return "";
+    const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp); // Firestore Timestamp veya Date objesi
+    return d.toLocaleString("tr-TR", {
+        year: "2-digit",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+}
+
+
+
+
 // Helper Fonksiyonlar
 
 // HSL'den RGB'ye dönüştürücü (renk üretimi için)
@@ -307,12 +322,14 @@ function loadMessages() {
         const messages = [];
         const nicknamePromises = [];
 
+        // Hata ayıklama için ek loglar
+        console.log("--- loadMessages Başladı ---");
+        console.log("Mesajlar Snapshot boş mu?", snapshot.empty);
+        console.log("Mesajlar Snapshot belge sayısı:", snapshot.size);
+
         snapshot.forEach(doc => {
             const data = doc.data();
-            const twentyFourHoursAgo = Date.now() - 86400000;
-            if (data.createdAt && data.createdAt.toDate().getTime() < twentyFourHoursAgo) {
-                return;
-            }
+            // 24 saatlik filtreleme burada kaldırılmıştı, bu kısım doğru
             messages.push({ id: doc.id, ...data });
             nicknamePromises.push(getNicknameByUid(data.userUid));
             (data.replies || []).forEach(reply => {
@@ -321,6 +338,9 @@ function loadMessages() {
         });
 
         await Promise.all(nicknamePromises);
+
+        console.log("Filtreleme sonrası 'messages' dizisi boyutu:", messages.length);
+
 
         const totalPages = Math.ceil(messages.length / MESSAGES_PER_PAGE);
         if (currentPage > totalPages) currentPage = totalPages || 1;
@@ -343,7 +363,7 @@ function loadMessages() {
 
         for (const msg of pageMessages) {
             const repliesCount = (msg.replies || []).length;
-            const { nickname: displayUser, color: userColor } = await getNicknameByUid(msg.userUid); // Nickname ve renk getirildi
+            const { nickname: displayUser, color: userColor } = await getNicknameByUid(msg.userUid);
 
             const msgEl = $(`
                 <div class="message">
@@ -362,7 +382,7 @@ function loadMessages() {
             if (repliesCount > 0) {
                 const repliesToShow = (msg.replies || []).slice(-5);
                 for (const rep of repliesToShow) {
-                    const { nickname: displayReplyUser, color: replyUserColor } = await getNicknameByUid(rep.userUid); // Yanıtlayan takma adı ve renk getirildi
+                    const { nickname: displayReplyUser, color: replyUserColor } = await getNicknameByUid(rep.userUid);
                     const repEl = $(`
                         <div class="reply-message mt-1 p-2 rounded" style="background:#444; color:#eee;">
                             <strong style="color: ${replyUserColor};">${displayReplyUser}</strong> <small class="text-muted">${formatDateTime(rep.createdAt)}</small><br/>
@@ -408,6 +428,7 @@ function loadMessages() {
 }
 
 
+
 // Yanıt ekleme (Yanıt Sistemi)
 async function addReply(messageId) {
     if (!currentUserUid) {
@@ -445,16 +466,14 @@ function loadTopMessages() {
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            const twentyFourHoursAgo = Date.now() - 86400000;
-            if (data.createdAt && data.createdAt.toDate().getTime() < twentyFourHoursAgo) {
-                return;
-            }
+            // 24 saatlik filtreleme kaldırıldı, tüm mesajlar değerlendirilecek
             messages.push({ id: doc.id, ...data });
             nicknamePromises.push(getNicknameByUid(data.userUid));
         });
 
         await Promise.all(nicknamePromises);
 
+        // Sıralama ve ilk 2'yi alma mantığı aynı kalacak
         const sorted = messages.slice().sort((a, b) => getTotalReactions(b) - getTotalReactions(a)).slice(0, 2);
         if (sorted.length === 0) {
             $("#top-messages-list").text("Henüz yok.");
@@ -462,7 +481,7 @@ function loadTopMessages() {
         }
 
         const htmlPromises = sorted.map(async m => {
-            const { nickname: displayUser, color: userColor } = await getNicknameByUid(m.userUid); // Nickname ve renk getirildi
+            const { nickname: displayUser, color: userColor } = await getNicknameByUid(m.userUid);
             return `<div class="mb-2 p-2 rounded message">
                 <div><strong style="color: ${userColor};">${displayUser}</strong> <small class="text-muted">${formatDateTime(m.createdAt)}</small></div>
                 <div>${m.text}</div>
@@ -553,17 +572,25 @@ async function submitAnswer() {
 
 // Cevapları yükleme ve listeleme (Real-time dinleme)
 function loadAnswers() {
-    if (!currentDailyQuestion) return; // Hala bunu tutalım, çünkü soru yoksa zaten boş kalır.
+    if (!currentDailyQuestion) {
+        console.warn("loadAnswers: currentDailyQuestion henüz ayarlanmadı.");
+        $("#answers-list").text("Henüz cevap yok.");
+        return;
+    }
 
     const answersRef = collection(db, "answers");
+    // ÖNEMLİ: 'question' alanına göre filtreleme ve 'createdAt'e göre sıralama için
+    // Firebase konsolunda bir DİZİN oluşturman GEREKİYOR.
     const q = query(answersRef,
-        // where("question", "==", currentDailyQuestion), // BU SATIRI YORUM SATIRI YAP
+        where("question", "==", currentDailyQuestion), // <-- Bu satırın aktif olduğundan emin ol
         orderBy("createdAt", "asc")
     );
 
     onSnapshot(q, async (snapshot) => {
+        console.log("--- loadAnswers Başladı ---");
         console.log("Answers Snapshot Boş mu?", snapshot.empty);
-        console.log("Answers Snapshot Belgeleri:", snapshot.docs.map(doc => doc.data())); // Gelen tüm verileri gör
+        console.log("Answers Snapshot belge sayısı:", snapshot.size);
+        console.log("currentDailyQuestion değeri:", currentDailyQuestion); // Hata ayıklama için
 
         const answers = [];
         const nicknamePromises = [];
@@ -574,7 +601,7 @@ function loadAnswers() {
             nicknamePromises.push(getNicknameByUid(data.userUid));
         });
 
-        console.log("Oluşturulan Answers Dizisi:", answers); // İşlendikten sonraki diziyi gör
+        console.log("Oluşturulan Answers Dizisi boyutu:", answers.length);
 
         await Promise.all(nicknamePromises);
 
@@ -586,7 +613,7 @@ function loadAnswers() {
         }
 
         for (const ans of answers) {
-            const { nickname: displayUser, color: userColor } = await getNicknameByUid(ans.userUid); // Nickname ve renk getirildi
+            const { nickname: displayUser, color: userColor } = await getNicknameByUid(ans.userUid);
             $list.append(`
                 <div class="mb-2 p-2 rounded" style="background:#333; color:#fff;">
                     <strong style="color: ${userColor};">${displayUser}:</strong> ${ans.text} <small class="text-muted">${formatDateTime(ans.createdAt)}</small>
@@ -596,6 +623,7 @@ function loadAnswers() {
         $list.scrollTop($list[0].scrollHeight);
     });
 }
+
 
 // Yeni fonksiyon: Eski verileri temizle
 async function cleanupOldData() {
@@ -677,10 +705,7 @@ function startShoutRotation() {
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            const twentyFourHoursAgo = Date.now() - 86400000;
-            if (data.createdAt && data.createdAt.toDate().getTime() < twentyFourHoursAgo) {
-                return;
-            }
+            // 24 saatlik filtreleme kaldırıldı, tüm haykırmalar değerlendirilecek
             shoutMessages.push({ id: doc.id, ...data });
             nicknamePromises.push(getNicknameByUid(data.userUid));
         });
@@ -760,18 +785,14 @@ $(function () {
             const userDocSnap = await getDoc(userDocRef);
 
             if (userDocSnap.exists()) {
-                // Kullanıcı profili zaten var, verilerini al
                 const userData = userDocSnap.data();
                 currentUserNickname = userData.nickname;
                 currentUserColor = userData.color || generateRandomColor();
-                // Eğer renk yoksa ve yeni üretildiyse, Firestore'a kaydet
                 if (!userData.color) {
                     await updateDoc(userDocRef, { color: currentUserColor });
                 }
             } else {
-                // Kullanıcı Auth'ta var ama Firestore'da profili yok (ilk giriş veya silinmiş profil)
-                // Yeni bir profil oluştur
-                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7); // Varsayılan anonim takma ad
+                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
                 currentUserColor = generateRandomColor();
                 try {
                     await setDoc(userDocRef, {
@@ -783,12 +804,11 @@ $(function () {
                 } catch (error) {
                     console.error("Yeni kullanıcı profili oluşturulurken hata:", error);
                     alert("Kullanıcı profili oluşturulamadı. Lütfen tekrar deneyin.");
-                    logout(); // Hata durumunda çıkış yap
+                    logout();
                     return;
                 }
             }
 
-            // Cache'i güncelle (profil oluşturulduktan veya alındıktan sonra)
             uidToNicknameMap[currentUserUid] = { nickname: currentUserNickname, color: currentUserColor };
 
             $("#login-screen").hide();
@@ -796,7 +816,6 @@ $(function () {
             $("#welcome-msg").text(`Hoş geldin, ${currentUserNickname}!`);
             loadInitialData();
         } else {
-            // Kullanıcı çıkış yapmış veya henüz giriş yapmamış
             currentUserUid = null;
             currentUserNickname = null;
             currentUserColor = null;
@@ -822,8 +841,7 @@ $(function () {
     $("#shout-btn").on("click", openShoutModal);
     $("#send-shout-btn").on("click", sendShout);
 
-   
-   // Gizli Oda butonuna tıklama olayı (Şimdi doğru yerde)
+    // Gizli Oda butonuna tıklama olayı (Şimdi doğru yerde)
     $("#secret-room-btn").on("click", () => {
         window.location.href = "secret_room.html";
     });
@@ -831,6 +849,8 @@ $(function () {
     setDailyQuestion();
     countdownToMidnight();
 });
+
+
 
 function loadInitialData() {
     loadMessages();
