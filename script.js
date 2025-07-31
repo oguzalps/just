@@ -713,12 +713,7 @@ function countdownToMidnight() {
         midnight.setHours(24, 0, 0, 0); // Bir sonraki gece yarısı
 
         let remaining = midnight.getTime() - now.getTime();
-		
-		 // --- TEST AMAÇLI GEÇİCİ DEĞİŞİKLİK BAŞLANGICI ---
-        // Bu satırı aktif ederek anında "yeni gün" tetiklemesini sağlayabilirsiniz.
-        // Test bittikten sonra bu satırı YORUM SATIRI YAPMAYI UNUTMAYIN!
-        remaining = 0; // remaining'i 0 yaparak hemen yeni gün tetiklemesini sağlıyoruz.
-        // --- TEST AMAÇLI GEÇİKLİ DEĞİŞİKLİK SONU ---
+			
 
 
         if (remaining <= 0) {
