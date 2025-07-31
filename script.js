@@ -202,10 +202,12 @@ document.getElementById("loginButton").addEventListener("click", async () => {
         document.getElementById("login-screen").style.display = "none";
         document.getElementById("main-app").style.display = "block";
         document.getElementById("welcome-msg").textContent = `Hoş geldin, ${nickname}!`;
+		console.log("Kullanıcı belgesi başarıyla yazıldı/güncellendi."); // Bu mesaj görünmeli
+
 
         loadInitialData();
     } catch (error) {
-        console.error("Giriş hatası:", error);
+        console.error("Giriş hatası (loginButton):", error); // Bu hatayı mı görüyorsun?
         alert("Giriş yapılamadı: " + error.message);
     }
 });
@@ -833,7 +835,7 @@ async function loadInitialData() {
     console.log("loadInitialData: Uygulama başlangıç verileri yükleniyor...");
     await setDailyQuestion(); // Günlük soruyu ayarla (ve eski cevapları temizler)
     loadMessages(); // Ana sayfa mesajlarını yükle
-    loadTopMessages(); // Top mesajları yükle
+    //loadTopMessages(); // Top mesajları yükle
     startShoutRotation(); // Haykırma rotasyonunu başlat
     countdownToMidnight(); // Geri sayımı başlat (ve gece yarısı temizliği/soru güncellemesi yapar)
 }
@@ -842,9 +844,14 @@ async function loadInitialData() {
 $(function () {
     $("#message-input-container").addClass("d-none-important");
 
-    onAuthStateChanged(auth, async (user) => {
+     onAuthStateChanged(auth, async (user) => {
+        console.log("onAuthStateChanged tetiklendi. user:", user ? user.uid : "null");
+
         if (user) {
+            // Kullanıcı zaten oturum açmış (veya oturumu sürdürülmüş)
             currentUserUid = user.uid;
+            console.log("Kullanıcı durumu: GİRİŞ YAPILMIŞ veya OTURUM SÜRDÜRÜLMÜŞ.", "UID:", currentUserUid);
+
             const userDocRef = doc(db, "users", currentUserUid);
             const userDocSnap = await getDoc(userDocRef);
 
@@ -855,46 +862,105 @@ $(function () {
                 if (!userData.color) {
                     await updateDoc(userDocRef, { color: currentUserColor });
                 }
+                console.log("Kullanıcı profili bulundu:", currentUserNickname);
             } else {
-                // Kullanıcı Auth'ta var ama Firestore'da profili yok
-                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
-                currentUserColor = generateRandomColor();
-                await setDoc(userDocRef, {
-                    nickname: currentUserNickname,
-                    color: currentUserColor,
-                    createdAt: serverTimestamp()
-                });
-                console.warn("Yeni anonim kullanıcı profili oluşturuldu:", currentUserNickname, currentUserUid);
+                // Bu durum normalde olmamalıdır, çünkü anonim girişte profil oluşturulur.
+                // Eğer buraya düşüyorsa, oturum bozulmuş veya eski bir anonim UID'ye denk gelmiş olabilir.
+                // Bu senaryoda kullanıcıdan tekrar nick istemek en doğrusu.
+                console.warn("Kullanıcı Auth'ta var ancak Firestore'da profili eksik. Yeniden nick girilmesi istenecek.");
+                currentUserNickname = null; // Nickname'i sıfırla ki giriş ekranı görünsün
+                currentUserColor = null;
+                $("#main-app").hide();
+                $("#login-screen").show();
+                $("#current-user-info").text("Giriş yapınız.");
+                return; // Bu durumda daha fazla işlem yapma, giriş ekranını bekle
             }
+
             $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
+            $("#login-screen").hide();
+            $("#main-app").show();
             
             // Kullanıcı başarıyla yüklendiğinde/oluşturulduğunda tüm başlangıç verilerini yükle
-            loadInitialData(); // <-- BURASI ÖNEMLİ!
+            loadInitialData(); // <-- Bu her başarılı girişte çalışır
             
         } else {
-            // Kullanıcı çıkış yapmış veya henüz giriş yapmamış, anonim olarak giriş yap
-            try {
-                const userCredential = await signInAnonymously(auth);
-                const newUser = userCredential.user;
-                currentUserUid = newUser.uid;
-                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
-                currentUserColor = generateRandomColor();
-                await setDoc(doc(db, "users", currentUserUid), {
-                    nickname: currentUserNickname,
-                    color: currentUserColor,
-                    createdAt: serverTimestamp()
-                });
-                $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
-                
-                // Anonim giriş başarılı olduğunda tüm başlangıç verilerini yükle
-                loadInitialData(); // <-- BURASI ÖNEMLİ!
-                
-            } catch (error) {
-                console.error("Anonim giriş hatası:", error);
-                $("#current-user-info").text("Giriş yapılamadı.");
-                alert("Giriş yapılamadı: " + error.message); // Hatanın detayını göster
-            }
+            // Kullanıcı oturum açmamış (ilk yükleme veya çıkış yapılmış)
+            console.log("Kullanıcı durumu: ÇIKIŞ YAPILMIŞ.");
+            currentUserUid = null;
+            currentUserNickname = null;
+            currentUserColor = null;
+            $("#main-app").hide();
+            $("#login-screen").show(); // HER ZAMAN GİRİŞ EKRANINI GÖSTER
+            $("#current-user-info").text("Giriş yapınız.");
+            $("#message-input-container").addClass("d-none-important"); // Giriş yapılana kadar mesaj kutusunu gizle
+            
+            // Eğer burası bir "loginButton" click olayı DEĞİLSE, anonim giriş YAPMA!
+            // signInAnonymously çağrısını buradan kaldırın.
+            // Sadece kullanıcı "Giriş Yap" butonuna bastığında çağrılmalı.
         }
+    });
+
+    // Login İşlemleri (loginButton click listener)
+    // BU KOD ZATEN MEVCUT OLMALI, BURADA DEĞİŞİKLİK YAPMA!
+    document.getElementById("loginButton").addEventListener("click", async () => {
+        const nickname = document.getElementById("nickname").value.trim();
+
+        if (!nickname) {
+            alert("Lütfen bir nick girin.");
+            return;
+        }
+
+        try {
+            // Anonim giriş sadece burada, kullanıcı butona bastığında tetiklenmeli
+            const userCredential = await signInAnonymously(auth);
+            const user = userCredential.user;
+            currentUserUid = user.uid;
+            currentUserNickname = nickname; // Kullanıcının girdiği nick'i kullan
+
+            let userColor = null;
+            const userDocRef = doc(db, "users", currentUserUid);
+            const userDocSnap = await getDoc(userDocRef);
+
+            if (userDocSnap.exists() && userDocSnap.data().color) {
+                userColor = userDocSnap.data().color;
+            } else {
+                userColor = generateRandomColor();
+            }
+            currentUserColor = userColor;
+
+            await setDoc(userDocRef, {
+                nickname: nickname, // Kullanıcının girdiği nick
+                color: userColor,
+                createdAt: serverTimestamp()
+            }, { merge: true });
+
+            document.getElementById("login-screen").style.display = "none";
+            document.getElementById("main-app").style.display = "block";
+            document.getElementById("welcome-msg").textContent = `Hoş geldin, ${nickname}!`;
+            
+            // Giriş başarılı olduğunda ilk verileri yükle
+            loadInitialData(); // <-- Bu da önemli
+            
+        } catch (error) {
+            console.error("Giriş hatası:", error);
+            alert("Giriş yapılamadı: " + error.message);
+        }
+    });
+
+
+    // Diğer Event Listeners (Bunlar zaten doğru yerde olmalı)
+    $("#logout-button").on("click", logout);
+    $("#message-send-btn").on("click", sendMessage);
+    $("#message-input").on("keypress", function (e) {
+        if (e.which == 13) {
+            sendMessage();
+        }
+    });
+    $("#send-shout-btn").on("click", openShoutModal);
+    $("#submit-shout-btn").on("click", sendShout);
+    $("#submit-daily-answer-btn").on("click", submitAnswer);
+    $("#open-secret-room-btn").on("click", () => {
+        window.location.href = "secret_room.html";
     });
 
 

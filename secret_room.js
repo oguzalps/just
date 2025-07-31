@@ -169,54 +169,77 @@ function loadSecretMessages() {
 
 // Uygulama başlangıcı
 $(function () {
-    onAuthStateChanged(auth, async (user) => {
-        if (user) {
-            currentUserUid = user.uid;
-            const userDocRef = doc(db, "users", currentUserUid);
-            const userDocSnap = await getDoc(userDocRef);
+onAuthStateChanged(auth, async (user) => {
+    console.log("Gizli Oda: onAuthStateChanged tetiklendi. user:", user ? user.uid : "null");
 
-            if (userDocSnap.exists()) {
-                const userData = userDocSnap.data();
-                currentUserNickname = userData.nickname;
-                currentUserColor = userData.color || generateRandomColor();
-                if (!userData.color) {
-                    await updateDoc(userDocRef, { color: currentUserColor });
-                }
-            } else {
-                // Kullanıcı Auth'ta var ama Firestore'da profili yok
-                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
-                currentUserColor = generateRandomColor();
-                await setDoc(userDocRef, {
-                    nickname: currentUserNickname,
-                    color: currentUserColor,
-                    createdAt: serverTimestamp()
-                });
-                console.warn("Gizli oda için yeni anonim kullanıcı profili oluşturuldu:", currentUserNickname, currentUserUid);
+    if (user) {
+        currentUserUid = user.uid;
+        console.log("Gizli Oda: Kullanıcı oturumda:", currentUserUid);
+        
+        const userDocRef = doc(db, "users", currentUserUid);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            currentUserNickname = userData.nickname;
+            currentUserColor = userData.color || generateRandomColor();
+            if (!userData.color) {
+                await updateDoc(userDocRef, { color: currentUserColor });
             }
-            $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
-            loadSecretMessages();
+            console.log("Gizli Oda: Kullanıcı profili bulundu:", currentUserNickname);
+            $("#secret-room-app").show(); // Gizli oda uygulamasını göster
+            loadSecretMessages(); // Gizli oda mesajlarını yükle
         } else {
-            // Kullanıcı çıkış yapmış veya henüz giriş yapmamış, anonim olarak giriş yap
-            try {
-                const userCredential = await signInAnonymously(auth);
-                const newUser = userCredential.user;
-                currentUserUid = newUser.uid;
-                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
-                currentUserColor = generateRandomColor();
-                await setDoc(doc(db, "users", currentUserUid), {
-                    nickname: currentUserNickname,
-                    color: currentUserColor,
-                    createdAt: serverTimestamp()
-                });
-                $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
-                loadSecretMessages();
-            } catch (error) {
-                console.error("Anonim giriş hatası:", error);
-                $("#current-user-info").text("Giriş yapılamadı.");
-                alert("Gizli odaya giriş yapılırken bir hata oluştu.");
-            }
+            // Kullanıcı Auth'ta var ama Firestore'da profili yok (Nick girmediği durum)
+            console.warn("Gizli Oda: Kullanıcının Firestore profili eksik. Ana sayfaya yönlendiriliyor.");
+            alert("Giriş yapmanız gerekiyor. Lütfen ana sayfadan nick girerek giriş yapın.");
+            window.location.href = "index.html"; // Ana sayfaya geri yönlendir
         }
-    });
+        $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
+    } else {
+    // Kullanıcı oturumda değil, anonim olarak giriş yapmayı dene
+    console.log("Gizli Oda: Kullanıcı oturumda değil. Anonim giriş deneniyor...");
+    try {
+        const userCredential = await signInAnonymously(auth);
+        const newUser = userCredential.user;
+        currentUserUid = newUser.uid;
+        
+        // ÖNEMLİ: Auth objesinin güncellenmesini bekle (genellikle gereksizdir ama hata devam ediyorsa deneyebiliriz)
+        // await new Promise(resolve => {
+        //     const unsubscribe = onAuthStateChanged(auth, u => {
+        //         if (u && u.uid === newUser.uid) {
+        //             unsubscribe(); // Dinleyiciyi hemen kaldır
+        //             resolve();
+        //         }
+        //     });
+        // });
+        // Yukarıdaki kısım genellikle gereksizdir çünkü signInAnonymously zaten await'li.
+
+        currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
+        currentUserColor = generateRandomColor();
+        
+        // Yeni anonim kullanıcı için Firestore'da profil oluştur
+        // Burada Missing permissions hatası alıyorsan, kullanıcı UID'sinin henüz atanmamış
+        // veya kurallara göre yetkisiz bir yazma girişimi olabilir.
+        // Ama kuralların doğru görünüyor.
+        await setDoc(doc(db, "users", currentUserUid), {
+            nickname: currentUserNickname,
+            color: currentUserColor,
+            createdAt: serverTimestamp()
+        });
+
+        console.log("Gizli Oda: Anonim giriş başarılı ve profil oluşturuldu.", currentUserUid, currentUserNickname);
+        $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
+        $("#secret-room-app").show(); // Gizli oda uygulamasını göster
+        loadSecretMessages(); // Gizli oda mesajlarını yükle
+
+    } catch (error) {
+        console.error("Gizli Oda: Anonim giriş hatası:", error);
+        alert("Gizli odaya giriş yapılırken bir hata oluştu: " + error.message + ". Lütfen ana sayfadan tekrar deneyin.");
+        window.location.href = "index.html"; // Hata durumunda ana sayfaya yönlendir
+    }
+}
+});
 
     // Event Listeners
     $("#send-secret-message-btn").on("click", sendSecretMessage);
