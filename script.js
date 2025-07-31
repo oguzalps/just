@@ -793,7 +793,7 @@ function startShoutRotation() {
 // Haykırma modalını açma
 function openShoutModal() {
     const shoutModal = new bootstrap.Modal(document.getElementById('shoutModal'));
-    $("#shout-input").val('');
+    //$("#shout-input").val('');
     shoutModal.show();
 }
 
