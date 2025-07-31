@@ -897,18 +897,28 @@ $(function () {
         }
     });
 
+
+  
+    $("#toggle-theme-btn").on("click", () => {
+        $("body").toggleClass("light dark");
+    });
+	
+	$("#toggle-message-input-btn").on("click", () => {
+        $("#message-input-container").removeClass("d-none-important");
+    });
+	
     // Event Listeners (Bunlar doğru yerde)
     $("#logout-button").on("click", logout);
-    $("#message-send-btn").on("click", sendMessage);
+    $("#send-message-btn").on("click", sendMessage);
     $("#message-input").on("keypress", function (e) {
         if (e.which == 13) {
             sendMessage();
         }
     });
-    $("#send-shout-btn").on("click", openShoutModal);
-    $("#submit-shout-btn").on("click", sendShout);
-    $("#submit-daily-answer-btn").on("click", submitAnswer);
-    $("#open-secret-room-btn").on("click", () => {
+    $("#shout-btn").on("click", openShoutModal);
+    $("#send-shout-btn").on("click", sendShout);
+    $("#submit-answer-btn").on("click", submitAnswer);
+    $("#secret-room-btn").on("click", () => {
         window.location.href = "secret_room.html";
     });
 });
