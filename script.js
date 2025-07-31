@@ -20,8 +20,8 @@ import {
     where,
     serverTimestamp,
     getDocs,
-	deleteDoc, // <-- Yeni eklenen: Tek belge silmek için (batch kullanacağız ama yine de dursun)
-    writeBatch // <-- Yeni eklenen: Toplu silme işlemleri için
+    deleteDoc,
+    writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -85,19 +85,20 @@ const dailyQuestions = [
 ];
 
 // Değişkenler
-let currentUserUid = null; // Kullanıcının Firebase UID'si
-let currentUserNickname = null; // Kullanıcının seçtiği takma ad
-let currentUserColor = null; // Kullanıcının rengi
+let currentUserUid = null;
+let currentUserNickname = null;
+let currentUserColor = null;
 let currentPage = 1;
-let shoutMessages = []; // Firestore'dan gelen haykırmalar
+let shoutMessages = [];
 let shoutIndex = 0;
 let shoutInterval = null;
 let currentDailyQuestion = null;
-const uidToNicknameMap = {}; // UID'leri nickname ve renk objelerine eşlemek için cache
+const uidToNicknameMap = {};
 
+// Zaman formatlama fonksiyonu
 function formatDateTime(timestamp) {
     if (!timestamp) return "";
-    const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp); // Firestore Timestamp veya Date objesi
+    const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return d.toLocaleString("tr-TR", {
         year: "2-digit",
         month: "2-digit",
@@ -107,12 +108,7 @@ function formatDateTime(timestamp) {
     });
 }
 
-
-
-
-// Helper Fonksiyonlar
-
-// HSL'den RGB'ye dönüştürücü (renk üretimi için)
+// Renk üretme ve dönüştürme fonksiyonları
 function hslToRgb(h, s, l) {
     l /= 100;
     const a = s * Math.min(l, 1 - l) / 100;
@@ -124,57 +120,54 @@ function hslToRgb(h, s, l) {
     return [f(0), f(8), f(4)];
 }
 
-// Rastgele okunaklı renk üreten fonksiyon (koyu arka plan için)
 function generateRandomColor() {
-    const h = Math.floor(Math.random() * 360); // Ton
-    const s = Math.floor(Math.random() * (90 - 70) + 70); // Doygunluk (70-90 arası)
-    const l = Math.floor(Math.random() * (70 - 50) + 50); // Parlaklık (50-70 arası, koyu arka plan için ideal)
+    const h = Math.floor(Math.random() * 360);
+    const s = Math.floor(Math.random() * (90 - 70) + 70);
+    const l = Math.floor(Math.random() * (70 - 50) + 50);
 
     const [r, g, b] = hslToRgb(h, s, l);
     return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
 
-
+// UID ile takma ad ve renk alma
 async function getNicknameByUid(uid) {
-    // UID'nin geçerli bir string olup olmadığını kontrol et
     if (typeof uid !== 'string' || !uid) {
         console.warn("getNicknameByUid: Geçersiz UID sağlandı:", uid);
-        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Geçersiz UID durumunda varsayılan dön
+        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
     }
 
     if (uidToNicknameMap[uid]) {
-        return uidToNicknameMap[uid]; // Cache'den dön
+        return uidToNicknameMap[uid];
     }
     try {
         const userDoc = await getDoc(doc(db, "users", uid));
         if (userDoc.exists()) {
             const userData = userDoc.data();
             const nickname = userData.nickname;
-            const color = userData.color || generateRandomColor(); // Renk yoksa yeni üret
+            const color = userData.color || generateRandomColor();
 
-            // Eğer renk yeni üretildiyse, Firestore'a kaydet
             if (!userData.color) {
                 await updateDoc(doc(db, "users", uid), { color: color });
             }
 
-            uidToNicknameMap[uid] = { nickname, color }; // Cache'e objeyi ekle
+            uidToNicknameMap[uid] = { nickname, color };
             return { nickname, color };
         } else {
-            // Kullanıcı belgesi Firestore'da yoksa (ancak UID geçerliyse)
             console.warn("getNicknameByUid: Kullanıcı belgesi bulunamadı:", uid);
-            return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Varsayılan dön
+            return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
         }
     } catch (error) {
         console.error("Kullanıcı takma adı veya renk alınamadı:", error);
-        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Hata durumunda varsayılan dön
+        return { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
     }
 }
 
+// Toplam tepki sayısını hesaplama
 function getTotalReactions(msg) {
     return Object.values(msg.reactions || {}).reduce((acc, arr) => acc + arr.length, 0);
 }
 
-// Yeni Login Mantığı (Firebase Anonymous Auth)
+// Login İşlemleri
 document.getElementById("loginButton").addEventListener("click", async () => {
     const nickname = document.getElementById("nickname").value.trim();
 
@@ -189,7 +182,6 @@ document.getElementById("loginButton").addEventListener("click", async () => {
         currentUserUid = user.uid;
         currentUserNickname = nickname;
 
-        // Kullanıcının rengini kontrol et veya ata
         let userColor = null;
         const userDocRef = doc(db, "users", currentUserUid);
         const userDocSnap = await getDoc(userDocRef);
@@ -199,12 +191,11 @@ document.getElementById("loginButton").addEventListener("click", async () => {
         } else {
             userColor = generateRandomColor();
         }
-        currentUserColor = userColor; // Global rengi ayarla
+        currentUserColor = userColor;
 
-        // Nickname ve rengi kullanıcıyla ilişkilendir (veritabanında)
         await setDoc(userDocRef, {
             nickname: nickname,
-            color: userColor, // Rengi de kaydet
+            color: userColor,
             createdAt: serverTimestamp()
         }, { merge: true });
 
@@ -252,7 +243,7 @@ async function sendMessage() {
             text,
             userUid: currentUserUid,
             nickname: currentUserNickname,
-            color: currentUserColor, // Rengi de mesajla birlikte kaydet (opsiyonel, getNicknameByUid yeterli)
+            color: currentUserColor,
             createdAt: serverTimestamp(),
             reactions: {},
             replies: []
@@ -265,7 +256,7 @@ async function sendMessage() {
     }
 }
 
-// Tepki butonlarını render etme (Emoji Tepki Sistemi)
+// Tepki butonlarını render etme
 function renderReactions(msgId, reactions) {
     let html = "";
     const emojis = ["😂", "😲", "🤔"];
@@ -283,7 +274,7 @@ function renderReactions(msgId, reactions) {
     return html;
 }
 
-// Tepki verme/geri çekme (Emoji Tepki Sistemi)
+// Tepki verme/geri çekme
 async function react(messageId, emoji) {
     if (!currentUserUid) {
         alert("Tepki vermek için giriş yapmalısın!");
@@ -322,14 +313,12 @@ function loadMessages() {
         const messages = [];
         const nicknamePromises = [];
 
-        // Hata ayıklama için ek loglar
         console.log("--- loadMessages Başladı ---");
         console.log("Mesajlar Snapshot boş mu?", snapshot.empty);
         console.log("Mesajlar Snapshot belge sayısı:", snapshot.size);
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            // 24 saatlik filtreleme burada kaldırılmıştı, bu kısım doğru
             messages.push({ id: doc.id, ...data });
             nicknamePromises.push(getNicknameByUid(data.userUid));
             (data.replies || []).forEach(reply => {
@@ -340,7 +329,6 @@ function loadMessages() {
         await Promise.all(nicknamePromises);
 
         console.log("Filtreleme sonrası 'messages' dizisi boyutu:", messages.length);
-
 
         const totalPages = Math.ceil(messages.length / MESSAGES_PER_PAGE);
         if (currentPage > totalPages) currentPage = totalPages || 1;
@@ -363,7 +351,7 @@ function loadMessages() {
 
         for (const msg of pageMessages) {
             const repliesCount = (msg.replies || []).length;
-            const { nickname: displayUser, color: userColor } = await getNicknameByUid(msg.userUid);
+            const { nickname: displayUser, color: userColor } = uidToNicknameMap[msg.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Cache'den al
 
             const msgEl = $(`
                 <div class="message">
@@ -382,7 +370,7 @@ function loadMessages() {
             if (repliesCount > 0) {
                 const repliesToShow = (msg.replies || []).slice(-5);
                 for (const rep of repliesToShow) {
-                    const { nickname: displayReplyUser, color: replyUserColor } = await getNicknameByUid(rep.userUid);
+                    const { nickname: displayReplyUser, color: replyUserColor } = uidToNicknameMap[rep.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
                     const repEl = $(`
                         <div class="reply-message mt-1 p-2 rounded" style="background:#444; color:#eee;">
                             <strong style="color: ${replyUserColor};">${displayReplyUser}</strong> <small class="text-muted">${formatDateTime(rep.createdAt)}</small><br/>
@@ -427,9 +415,7 @@ function loadMessages() {
     });
 }
 
-
-
-// Yanıt ekleme (Yanıt Sistemi)
+// Yanıt ekleme
 async function addReply(messageId) {
     if (!currentUserUid) {
         alert("Yanıt vermek için giriş yapmalısın!");
@@ -443,7 +429,7 @@ async function addReply(messageId) {
                 replies: arrayUnion({
                     userUid: currentUserUid,
                     nickname: currentUserNickname,
-                    color: currentUserColor, // Yanıtla birlikte rengi de kaydet (opsiyonel)
+                    color: currentUserColor,
                     text: replyText.trim(),
                     createdAt: new Date()
                 })
@@ -455,7 +441,7 @@ async function addReply(messageId) {
     }
 }
 
-// En çok tepki alan mesajları yükleme (Real-time dinleme)
+// En çok tepki alan mesajları yükleme
 function loadTopMessages() {
     const messagesRef = collection(db, "messages");
     const q = query(messagesRef, orderBy("createdAt", "desc"));
@@ -466,14 +452,12 @@ function loadTopMessages() {
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            // 24 saatlik filtreleme kaldırıldı, tüm mesajlar değerlendirilecek
             messages.push({ id: doc.id, ...data });
             nicknamePromises.push(getNicknameByUid(data.userUid));
         });
 
         await Promise.all(nicknamePromises);
 
-        // Sıralama ve ilk 2'yi alma mantığı aynı kalacak
         const sorted = messages.slice().sort((a, b) => getTotalReactions(b) - getTotalReactions(a)).slice(0, 2);
         if (sorted.length === 0) {
             $("#top-messages-list").text("Henüz yok.");
@@ -481,7 +465,7 @@ function loadTopMessages() {
         }
 
         const htmlPromises = sorted.map(async m => {
-            const { nickname: displayUser, color: userColor } = await getNicknameByUid(m.userUid);
+            const { nickname: displayUser, color: userColor } = uidToNicknameMap[m.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
             return `<div class="mb-2 p-2 rounded message">
                 <div><strong style="color: ${userColor};">${displayUser}</strong> <small class="text-muted">${formatDateTime(m.createdAt)}</small></div>
                 <div>${m.text}</div>
@@ -502,21 +486,41 @@ function loadTopMessages() {
 
 // Günlük soruyu ayarlama (Firestore'dan okuma/yazma)
 async function setDailyQuestion() {
-    const today = new Date().toDateString();
     const dailyQuestionDocRef = doc(db, "appSettings", "dailyQuestion");
 
     try {
         const docSnap = await getDoc(dailyQuestionDocRef);
+        const now = new Date();
+        const todayString = now.toLocaleDateString("tr-TR"); // "gg.aa.yyyy" formatında tarih
 
-        if (docSnap.exists() && docSnap.data().date === today) {
-            currentDailyQuestion = docSnap.data().question;
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            const lastQuestionDate = data.date; // Bu 'gg.aa.yyyy' formatında olmalı
+
+            // Tarih karşılaştırması: Kayıtlı tarih bugünden farklı mı?
+            if (lastQuestionDate !== todayString) {
+                // Yeni gün, soruyu değiştir ve eski cevapları temizle
+                const randomIndex = Math.floor(Math.random() * dailyQuestions.length);
+                currentDailyQuestion = dailyQuestions[randomIndex].trim();
+                await setDoc(dailyQuestionDocRef, {
+                    date: todayString,
+                    question: currentDailyQuestion
+                });
+                console.log("Yeni günlük soru ayarlandı ve eski cevaplar temizleniyor.");
+                await clearOldAnswers(); // Eski cevapları temizle
+            } else {
+                // Aynı gün, mevcut soruyu kullan
+                currentDailyQuestion = data.question;
+            }
         } else {
+            // Belge yoksa, ilk defa soru ayarla
             const randomIndex = Math.floor(Math.random() * dailyQuestions.length);
             currentDailyQuestion = dailyQuestions[randomIndex].trim();
             await setDoc(dailyQuestionDocRef, {
-                date: today,
+                date: todayString,
                 question: currentDailyQuestion
             });
+            console.log("İlk günlük soru ayarlandı.");
         }
         $("#daily-question p b").text(`Soru: ${currentDailyQuestion}`);
         loadAnswers();
@@ -525,6 +529,31 @@ async function setDailyQuestion() {
         $("#daily-question p b").text("Soru yüklenemedi.");
     }
 }
+
+// Eski günlük soru cevaplarını temizleme
+async function clearOldAnswers() {
+    const answersRef = collection(db, "answers");
+    const q = query(answersRef, where("question", "!=", currentDailyQuestion)); // Mevcut sorudan farklı olan tüm cevapları hedefle
+
+    try {
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+            console.log("Eski günlük soru cevapları bulunamadı.");
+            return;
+        }
+
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(docSnapshot => {
+            batch.delete(doc(db, "answers", docSnapshot.id));
+        });
+
+        await batch.commit();
+        console.log(`${snapshot.size} adet eski günlük soru cevabı başarıyla silindi.`);
+    } catch (error) {
+        console.error("Eski günlük soru cevapları temizlenirken hata oluştu:", error);
+    }
+}
+
 
 // Günlük soruya cevap gönderme
 async function submitAnswer() {
@@ -555,7 +584,7 @@ async function submitAnswer() {
             await addDoc(answersRef, {
                 userUid: currentUserUid,
                 nickname: currentUserNickname,
-                color: currentUserColor, // Cevapla birlikte rengi de kaydet (opsiyonel)
+                color: currentUserColor,
                 question: currentDailyQuestion,
                 text: answerText,
                 createdAt: serverTimestamp()
@@ -570,7 +599,7 @@ async function submitAnswer() {
     }
 }
 
-// Cevapları yükleme ve listeleme (Real-time dinleme)
+// Cevapları yükleme ve listeleme
 function loadAnswers() {
     if (!currentDailyQuestion) {
         console.warn("loadAnswers: currentDailyQuestion henüz ayarlanmadı.");
@@ -579,10 +608,8 @@ function loadAnswers() {
     }
 
     const answersRef = collection(db, "answers");
-    // ÖNEMLİ: 'question' alanına göre filtreleme ve 'createdAt'e göre sıralama için
-    // Firebase konsolunda bir DİZİN oluşturman GEREKİYOR.
     const q = query(answersRef,
-        where("question", "==", currentDailyQuestion), // <-- Bu satırın aktif olduğundan emin ol
+        where("question", "==", currentDailyQuestion),
         orderBy("createdAt", "asc")
     );
 
@@ -590,7 +617,7 @@ function loadAnswers() {
         console.log("--- loadAnswers Başladı ---");
         console.log("Answers Snapshot Boş mu?", snapshot.empty);
         console.log("Answers Snapshot belge sayısı:", snapshot.size);
-        console.log("currentDailyQuestion değeri:", currentDailyQuestion); // Hata ayıklama için
+        console.log("currentDailyQuestion değeri:", currentDailyQuestion);
 
         const answers = [];
         const nicknamePromises = [];
@@ -613,7 +640,7 @@ function loadAnswers() {
         }
 
         for (const ans of answers) {
-            const { nickname: displayUser, color: userColor } = await getNicknameByUid(ans.userUid);
+            const { nickname: displayUser, color: userColor } = uidToNicknameMap[ans.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
             $list.append(`
                 <div class="mb-2 p-2 rounded" style="background:#333; color:#fff;">
                     <strong style="color: ${userColor};">${displayUser}:</strong> ${ans.text} <small class="text-muted">${formatDateTime(ans.createdAt)}</small>
@@ -624,63 +651,93 @@ function loadAnswers() {
     });
 }
 
-
-// Yeni fonksiyon: Eski verileri temizle
+// Yeni fonksiyon: Eski mesajları ve haykırmaları temizle (24 saatten eski olanlar)
+// Verileri temizleme fonksiyonu (cleanupOldData)
+// Verileri temizleme fonksiyonu (cleanupOldData)
 async function cleanupOldData() {
-    console.log("Eski veriler temizleniyor...");
-    const twentyFourHoursAgo = new Date(Date.now() - 86400000);
+    console.log("cleanupOldData çalışıyor...");
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    console.log("Şu anki zaman:", now.toLocaleString());
+    console.log("24 saat önceki zaman (silme eşiği):", twentyFourHoursAgo.toLocaleString());
 
-    const collectionsToClean = ["messages", "shouts", "answers"];
+    const collectionsToClean = ['messages', 'shouts', 'secret_room_messages'];
 
     for (const collectionName of collectionsToClean) {
+        console.log(`--- Koleksiyon '${collectionName}' için temizlik başlatılıyor ---`);
+        console.log(`Sorgu: createdAt < ${twentyFourHoursAgo.toLocaleString()}`); // Sorgu eşiğini logla
+
+        const q = query(collection(db, collectionName), where("createdAt", "<", twentyFourHoursAgo));
+        let querySnapshot;
         try {
-            const q = query(
-                collection(db, collectionName),
-                where("createdAt", "<", twentyFourHoursAgo)
-            );
-            const snapshot = await getDocs(q);
-
-            if (snapshot.empty) {
-                console.log(`Koleksiyon '${collectionName}' içinde temizlenecek eski veri yok.`);
-                continue;
-            }
-
-            const batch = writeBatch(db);
-            snapshot.docs.forEach(docSnapshot => {
-                batch.delete(doc(db, collectionName, docSnapshot.id));
-            });
-
-            await batch.commit();
-            console.log(`Koleksiyon '${collectionName}' içindeki ${snapshot.size} eski belge başarıyla silindi.`);
-
+            querySnapshot = await getDocs(q);
         } catch (error) {
-            console.error(`Koleksiyon '${collectionName}' temizlenirken hata oluştu:`, error);
+            console.error(`Koleksiyon '${collectionName}' için belge alınırken hata oluştu:`, error);
+            // Hata durumunda döngüden çıkma, diğer koleksiyonlara devam et
+            continue;
         }
+
+
+        if (querySnapshot.empty) {
+            console.log(`Koleksiyon '${collectionName}' içinde temizlenecek eski veri bulunamadı.`);
+            continue;
+        }
+
+        console.log(`Koleksiyon '${collectionName}' içinde ${querySnapshot.size} adet eski belge bulundu.`);
+        // Bulunan belgelerin ID'lerini ve createdAt tarihlerini logla
+        querySnapshot.docs.forEach(docSnapshot => {
+            const data = docSnapshot.data();
+            console.log(`  - Belge ID: ${docSnapshot.id}, createdAt: ${data.createdAt ? data.createdAt.toDate().toLocaleString() : 'Yok'}`);
+        });
+
+        const batch = writeBatch(db);
+        querySnapshot.docs.forEach((doc) => {
+            batch.delete(doc.ref);
+        });
+
+        try {
+            await batch.commit();
+            console.log(`Koleksiyon '${collectionName}' içinde ${querySnapshot.size} adet eski belge başarıyla silindi.`);
+        } catch (error) {
+            console.error(`Koleksiyon '${collectionName}' içindeki eski belgeler silinirken batch commit hatası oluştu:`, error);
+        }
+        console.log(`--- Koleksiyon '${collectionName}' temizlik tamamlandı ---`);
     }
 }
 
-// Gece Yarısına Kadar Geri Sayım
+// Gece Yarısına Kadar Geri Sayım ve İşlemler
 function countdownToMidnight() {
-    const updateCountdown = () => {
+    const updateCountdown = async () => {
         const now = new Date();
         const midnight = new Date(now);
-        midnight.setHours(24, 0, 0, 0);
+        midnight.setHours(24, 0, 0, 0); // Bir sonraki gece yarısı
 
-        const remaining = midnight.getTime() - now.getTime();
+        let remaining = midnight.getTime() - now.getTime();
+		
+		 // --- TEST AMAÇLI GEÇİCİ DEĞİŞİKLİK BAŞLANGICI ---
+        // Bu satırı aktif ederek anında "yeni gün" tetiklemesini sağlayabilirsiniz.
+        // Test bittikten sonra bu satırı YORUM SATIRI YAPMAYI UNUTMAYIN!
+        remaining = 0; // remaining'i 0 yaparak hemen yeni gün tetiklemesini sağlıyoruz.
+        // --- TEST AMAÇLI GEÇİKLİ DEĞİŞİKLİK SONU ---
+
 
         if (remaining <= 0) {
-            $("#countdown").text("Yeni gün başladı! Veriler temizleniyor...");
-            cleanupOldData().then(() => {
-                console.log("Veri temizleme tamamlandı, sayfa yenileniyor.");
-                setTimeout(() => {
-                    location.reload();
-                }, 1000);
-            }).catch(error => {
-                console.error("Veri temizleme sırasında hata oluştu:", error);
-                setTimeout(() => {
-                    location.reload();
-                }, 1000);
-            });
+            // Eğer süre dolmuşsa veya geçmişse (bir sonraki güne geçmişse)
+            // Geri sayımı güncelleyip tekrar çalıştırıyoruz, 1 saniye bekle
+            // Bu, hemen temizlik işlemini tetiklemek yerine, bir sonraki saniyede doğru hesaplama için
+            setTimeout(async () => {
+                $("#countdown").text("Yeni gün başladı! Veriler temizleniyor...");
+                console.log("Gece yarısı tetiklendi. Veriler temizleniyor...");
+                await cleanupOldData(); // Mesajları ve haykırmaları temizle
+                await setDailyQuestion(); // Yeni günlük soruyu ayarla ve eski cevapları temizle
+                // Veri temizliği ve soru ayarlandıktan sonra sayacı tekrar başlat
+                updateCountdown(); // Bir sonraki gece yarısına göre tekrar hesapla
+                // Arayüzü yenilemek için gerekli çağrılar:
+                loadMessages();
+                loadTopMessages();
+                loadAnswers(); // setDailyQuestion içinde çağrılıyor ama emin olmak için
+                console.log("Veri temizleme ve soru ayarlama tamamlandı.");
+            }, 1000); // 1 saniye bekle
             return;
         }
 
@@ -690,9 +747,11 @@ function countdownToMidnight() {
         $("#countdown").text(`Yeni gün için: ${hours}sa ${minutes}dk ${seconds}sn`);
     };
 
+    // İlk çalıştırma ve her saniye güncelleme
     updateCountdown();
     setInterval(updateCountdown, 1000);
 }
+
 
 // Haykırma rotasyonunu başlatma (Real-time dinleme)
 function startShoutRotation() {
@@ -705,7 +764,6 @@ function startShoutRotation() {
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            // 24 saatlik filtreleme kaldırıldı, tüm haykırmalar değerlendirilecek
             shoutMessages.push({ id: doc.id, ...data });
             nicknamePromises.push(getNicknameByUid(data.userUid));
         });
@@ -720,14 +778,14 @@ function startShoutRotation() {
             return;
         }
 
-        const { nickname: firstShoutUser, color: firstShoutColor } = await getNicknameByUid(shoutMessages[shoutIndex].userUid);
+        const { nickname: firstShoutUser, color: firstShoutColor } = uidToNicknameMap[shoutMessages[shoutIndex].userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
         $("#shout-text-display").html(`<span style="color: ${firstShoutColor};">${firstShoutUser}</span>: ${shoutMessages[shoutIndex].text}`).show();
 
         shoutInterval = setInterval(async () => {
             shoutIndex++;
             if (shoutIndex >= shoutMessages.length) shoutIndex = 0;
 
-            const { nickname: currentShoutUser, color: currentShoutColor } = await getNicknameByUid(shoutMessages[shoutIndex].userUid);
+            const { nickname: currentShoutUser, color: currentShoutColor } = uidToNicknameMap[shoutMessages[shoutIndex].userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
             $("#shout-text-display").fadeOut(500, function() {
                 $(this).html(`<span style="color: ${currentShoutColor};">${currentShoutUser}</span>: ${shoutMessages[shoutIndex].text}`).fadeIn(500);
             });
@@ -762,7 +820,7 @@ async function sendShout() {
         await addDoc(collection(db, "shouts"), {
             userUid: currentUserUid,
             nickname: currentUserNickname,
-            color: currentUserColor, // Rengi de haykırmayla birlikte kaydet (opsiyonel)
+            color: currentUserColor,
             text: shoutText,
             createdAt: serverTimestamp()
         });
@@ -831,30 +889,31 @@ $(function () {
     // Event Listener'lar
     $("#logout-btn").on("click", logout);
     $("#send-message-btn").on("click", sendMessage);
-    $("#toggle-theme-btn").on("click", () => {
-        $("body").toggleClass("light dark");
-    });
-    $("#submit-answer-btn").on("click", submitAnswer);
     $("#toggle-message-input-btn").on("click", () => {
-        $("#message-input-container").removeClass("d-none-important");
+        $("#message-input-container").toggleClass("d-none-important");
     });
     $("#shout-btn").on("click", openShoutModal);
     $("#send-shout-btn").on("click", sendShout);
+    $("#submit-answer-btn").on("click", submitAnswer);
 
-    // Gizli Oda butonuna tıklama olayı (Şimdi doğru yerde)
-    $("#secret-room-btn").on("click", () => {
-        window.location.href = "secret_room.html";
+    // Initial data yükleme fonksiyonu
+    function loadInitialData() {
+        countdownToMidnight(); // Geri sayımı başlat
+        startShoutRotation(); // Haykırmaları başlat
+        setDailyQuestion();   // Günlük soruyu ayarla
+        loadMessages();       // Mesajları yükle
+        loadTopMessages();    // En çok tepki alan mesajları yükle
+    }
+
+    // Tema değiştirme
+    $("#toggle-theme-btn").on("click", () => {
+        $("body").toggleClass("dark light");
+        // Bootstrap tema renklerinin de güncellenmesi gerekebilir
+        // Bootstrap sınıfları otomatik olarak temaya göre değişmeyebilir, manuel kontrol gerekebilir.
     });
 
-    setDailyQuestion();
-    countdownToMidnight();
+    // Gizli oda butonu placeholder
+    $("#secret-room-btn").on("click", () => {
+        //alert("Özel Oda henüz hazır değil!");
+    });
 });
-
-
-
-function loadInitialData() {
-    loadMessages();
-    loadTopMessages();
-    loadAnswers();
-    startShoutRotation();
-}

@@ -21,23 +21,23 @@
                 <div id="main-app" style="display:none;">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <span id="welcome-msg" class="fs-10" style="font-size: 13px;"></span>
-                        <div class="d-flex align-items-center"> <!-- Butonlar için flex container -->
-                            <button id="secret-room-btn" class="btn btn-info btn-sm me-1">🤫 Gizli Oda</button> <!-- Yeni Gizli Oda butonu -->
-                            <button id="toggle-theme-btn" class="btn btn-outline-secondary btn-sm me-1">🌓 Tema</button> <!-- btn-sm eklendi -->
-                            <button id="logout-btn" class="btn btn-outline-danger btn-sm">🚪 Çıkış</button> <!-- btn-sm eklendi -->
+                        <div class="d-flex align-items-center">
+                            <a href="secret_room.html" id="secret-room-btn" class="btn btn-info btn-sm me-1">💬 Canlı Chat</a>
+                            <button id="toggle-theme-btn" class="btn btn-outline-secondary btn-sm me-1">🌓 Tema</button>
+                            <button id="logout-btn" class="btn btn-outline-danger btn-sm">🚪 Çıkış</button>
                         </div>
                     </div>
-
-                    <div id="countdown" class="mb-3 fs-6 text-warning"></div>
-
+					<small>Tüm mesajlarınız yeni gün ile birlikte silinecektir.</small>
+                    <div id="countdown" class="mb-3 fs-6 text-warning"></div>					
                     <h4 class="mt-4">📣 Haykırmalar</h4>
-                    <div id="shout-section" class="bg-primary text-white p-2 rounded shadow mb-4" title="Haykırmalar">
-                        <div id="shout-text-display"></div>
+                    <div id="shout-section" class="bg-gradient-primary text-white p-3 rounded-3 shadow-lg mb-4 position-relative overflow-hidden">
+                        <div id="shout-text-display" class="fs-5 fw-bold text-center" style="font-size:14px !important"></div>
+                        <div class="shout-bubble-effect"></div>
                     </div>
-                    <h4 class="mt-4">🔥 En Çok Tepki Alan Mesajlar</h4>
-                    <div id="top-messages-list" class="mb-4">
+                    <!--<h4 class="mt-4">🔥 En Çok Tepki Alan Mesajlar</h4>
+                    <div id="top-messages-list___" class="mb-4">
                         Henüz yok.
-                    </div>
+                    </div>-->
 
                     <h4 class="mt-4">📩 Mesajlar</h4>
                     <div id="message-list" class="mb-3"></div>
@@ -60,10 +60,9 @@
                     </div>
 
                 </div>
-            </div> <!-- #main-app -->
-            </div> <!-- .col -->
-        </div> <!-- .row -->
-    </div> <!-- .container -->
+            </div>
+        </div>
+    </div>
 
     <div id="message-input-container" class="d-flex flex-column p-3 bg-dark rounded shadow position-fixed bottom-0 end-0 m-3 z-index-1000" style="width: 300px;">
         <textarea id="message-input" class="form-control mb-2" rows="3" placeholder="Bir mesaj yaz..."></textarea>
