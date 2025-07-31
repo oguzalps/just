@@ -908,7 +908,7 @@ $(function () {
     });
 	
     // Event Listeners (Bunlar doğru yerde)
-    $("#logout-button").on("click", logout);
+    $("#logout-btn").on("click", logout);
     $("#send-message-btn").on("click", sendMessage);
     $("#message-input").on("keypress", function (e) {
         if (e.which == 13) {
