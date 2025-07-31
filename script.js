@@ -822,6 +822,7 @@ async function sendShout() {
             createdAt: serverTimestamp()
         });
         $("#shout-input").val("");
+	shoutModal.hide();
         bootstrap.Modal.getInstance(document.getElementById('shoutModal')).hide();
     } catch (error) {
         console.error("Haykırma gönderme hatası:", error);
