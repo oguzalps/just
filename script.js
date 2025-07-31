@@ -713,8 +713,8 @@ function countdownToMidnight() {
         midnight.setHours(24, 0, 0, 0); // Bir sonraki gece yarısı
 
         let remaining = midnight.getTime() - now.getTime();
-			
-
+		
+		 
 
         if (remaining <= 0) {
             // Eğer süre dolmuşsa veya geçmişse (bir sonraki güne geçmişse)
@@ -828,6 +828,17 @@ async function sendShout() {
 }
 
 // Uygulama başlangıcında çalışacak fonksiyon (jQuery document ready)
+// Yeni fonksiyon: Uygulama başlangıcında yüklenmesi gereken tüm verileri ve işlevleri başlatır
+async function loadInitialData() {
+    console.log("loadInitialData: Uygulama başlangıç verileri yükleniyor...");
+    await setDailyQuestion(); // Günlük soruyu ayarla (ve eski cevapları temizler)
+    loadMessages(); // Ana sayfa mesajlarını yükle
+    loadTopMessages(); // Top mesajları yükle
+    startShoutRotation(); // Haykırma rotasyonunu başlat
+    countdownToMidnight(); // Geri sayımı başlat (ve gece yarısı temizliği/soru güncellemesi yapar)
+}
+
+// Uygulama başlangıcında çalışacak fonksiyon (jQuery document ready)
 $(function () {
     $("#message-input-container").addClass("d-none-important");
 
@@ -845,70 +856,59 @@ $(function () {
                     await updateDoc(userDocRef, { color: currentUserColor });
                 }
             } else {
+                // Kullanıcı Auth'ta var ama Firestore'da profili yok
                 currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
                 currentUserColor = generateRandomColor();
-                try {
-                    await setDoc(userDocRef, {
-                        nickname: currentUserNickname,
-                        color: currentUserColor,
-                        createdAt: serverTimestamp()
-                    });
-                    console.warn("Yeni kullanıcı profili oluşturuldu:", currentUserNickname, currentUserUid);
-                } catch (error) {
-                    console.error("Yeni kullanıcı profili oluşturulurken hata:", error);
-                    alert("Kullanıcı profili oluşturulamadı. Lütfen tekrar deneyin.");
-                    logout();
-                    return;
-                }
+                await setDoc(userDocRef, {
+                    nickname: currentUserNickname,
+                    color: currentUserColor,
+                    createdAt: serverTimestamp()
+                });
+                console.warn("Yeni anonim kullanıcı profili oluşturuldu:", currentUserNickname, currentUserUid);
             }
-
-            uidToNicknameMap[currentUserUid] = { nickname: currentUserNickname, color: currentUserColor };
-
-            $("#login-screen").hide();
-            $("#main-app").show();
-            $("#welcome-msg").text(`Hoş geldin, ${currentUserNickname}!`);
-            loadInitialData();
+            $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
+            
+            // Kullanıcı başarıyla yüklendiğinde/oluşturulduğunda tüm başlangıç verilerini yükle
+            loadInitialData(); // <-- BURASI ÖNEMLİ!
+            
         } else {
-            currentUserUid = null;
-            currentUserNickname = null;
-            currentUserColor = null;
-            $("#main-app").hide();
-            $("#login-screen").show();
-            $("#nickname").val("");
-            $("#message-input-container").addClass("d-none-important");
-            clearInterval(shoutInterval);
-            $("#shout-text-display").text("Henüz haykırma yok.");
+            // Kullanıcı çıkış yapmış veya henüz giriş yapmamış, anonim olarak giriş yap
+            try {
+                const userCredential = await signInAnonymously(auth);
+                const newUser = userCredential.user;
+                currentUserUid = newUser.uid;
+                currentUserNickname = "Anonim_" + Math.random().toString(36).substring(2, 7);
+                currentUserColor = generateRandomColor();
+                await setDoc(doc(db, "users", currentUserUid), {
+                    nickname: currentUserNickname,
+                    color: currentUserColor,
+                    createdAt: serverTimestamp()
+                });
+                $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
+                
+                // Anonim giriş başarılı olduğunda tüm başlangıç verilerini yükle
+                loadInitialData(); // <-- BURASI ÖNEMLİ!
+                
+            } catch (error) {
+                console.error("Anonim giriş hatası:", error);
+                $("#current-user-info").text("Giriş yapılamadı.");
+                alert("Giriş yapılamadı: " + error.message); // Hatanın detayını göster
+            }
         }
     });
 
-    // Event Listener'lar
-    $("#logout-btn").on("click", logout);
-    $("#send-message-btn").on("click", sendMessage);
-    $("#toggle-message-input-btn").on("click", () => {
-        $("#message-input-container").toggleClass("d-none-important");
+    // Event Listeners (Bunlar doğru yerde)
+    $("#logout-button").on("click", logout);
+    $("#message-send-btn").on("click", sendMessage);
+    $("#message-input").on("keypress", function (e) {
+        if (e.which == 13) {
+            sendMessage();
+        }
     });
-    $("#shout-btn").on("click", openShoutModal);
-    $("#send-shout-btn").on("click", sendShout);
-    $("#submit-answer-btn").on("click", submitAnswer);
-
-    // Initial data yükleme fonksiyonu
-    function loadInitialData() {
-        countdownToMidnight(); // Geri sayımı başlat
-        startShoutRotation(); // Haykırmaları başlat
-        setDailyQuestion();   // Günlük soruyu ayarla
-        loadMessages();       // Mesajları yükle
-        loadTopMessages();    // En çok tepki alan mesajları yükle
-    }
-
-    // Tema değiştirme
-    $("#toggle-theme-btn").on("click", () => {
-        $("body").toggleClass("dark light");
-        // Bootstrap tema renklerinin de güncellenmesi gerekebilir
-        // Bootstrap sınıfları otomatik olarak temaya göre değişmeyebilir, manuel kontrol gerekebilir.
-    });
-
-    // Gizli oda butonu placeholder
-    $("#secret-room-btn").on("click", () => {
-        //alert("Özel Oda henüz hazır değil!");
+    $("#send-shout-btn").on("click", openShoutModal);
+    $("#submit-shout-btn").on("click", sendShout);
+    $("#submit-daily-answer-btn").on("click", submitAnswer);
+    $("#open-secret-room-btn").on("click", () => {
+        window.location.href = "secret_room.html";
     });
 });
