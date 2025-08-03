@@ -1,4 +1,17 @@
 // script.js
+// Sayfalama İçin Global Değişkenler
+let currentPage = 1;
+// messagePageHistory: Dizideki her eleman, ilgili sayfanın ilk görünen belgesidir (Firestore DocumentSnapshot).
+// İlk eleman (index 0) null olacak, çünkü ilk sayfanın "öncesi" yok.
+let messagePageHistory = [null]; 
+let lastVisibleMessageDoc = null; // Mevcut sayfanın son belgesi
+let firstVisibleMessageDoc = null; // Mevcut sayfanın ilk belgesi
+let unsubscribeMessages = null; // Firestore dinleyicisini kapatmak için
+const MESSAGES_PER_PAGE = 10; // Sayfa başına mesaj sayısı
+
+// Sayfa geçmişini tutan dizi. Her eleman bir önceki sayfanın son belgesi (next için startAfter)
+// pageHistory[0] ilk yüklemedir (null). pageHistory[1] 2. sayfanın başlangıcıdır.
+
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
@@ -21,7 +34,8 @@ import {
     serverTimestamp,
     getDocs,
     deleteDoc,
-    writeBatch
+    writeBatch,
+    startAfter // Firestore sayfalama için gerekli
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -40,7 +54,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // Sabitler
-const MESSAGES_PER_PAGE = 10;
 const dailyQuestions = [
     "Hayatta seni en çok motive eden şey nedir?",
     "En büyük pişmanlığın ne ve neden?",
@@ -88,7 +101,7 @@ const dailyQuestions = [
 let currentUserUid = null;
 let currentUserNickname = null;
 let currentUserColor = null;
-let currentPage = 1;
+
 let shoutMessages = [];
 let shoutIndex = 0;
 let shoutInterval = null;
@@ -98,6 +111,7 @@ const uidToNicknameMap = {};
 // Zaman formatlama fonksiyonu
 function formatDateTime(timestamp) {
     if (!timestamp) return "";
+    // Firebase Timestamp objesi ise toDate() kullan, değilse doğrudan kullan
     const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return d.toLocaleString("tr-TR", {
         year: "2-digit",
@@ -193,22 +207,23 @@ document.getElementById("loginButton").addEventListener("click", async () => {
         }
         currentUserColor = userColor;
 
+        // **BURASI:** Kullanıcı belgesini oluştur/güncelle
         await setDoc(userDocRef, {
             nickname: nickname,
             color: userColor,
             createdAt: serverTimestamp()
         }, { merge: true });
 
+        // Belge başarılı bir şekilde kaydedildikten sonra UI güncellenmeli ve veriler yüklenmeli
         document.getElementById("login-screen").style.display = "none";
         document.getElementById("main-app").style.display = "block";
         document.getElementById("welcome-msg").textContent = `Hoş geldin, ${nickname}!`;
-		console.log("Kullanıcı belgesi başarıyla yazıldı/güncellendi."); // Bu mesaj görünmeli
+        console.log("Kullanıcı belgesi başarıyla yazıldı/güncellendi."); // Bu mesaj görünmeli
 
-
-        loadInitialData();
+        loadInitialData(); // Bu fonksiyonun burada çağrılması önemli
     } catch (error) {
-        console.error("Giriş hatası (loginButton):", error); // Bu hatayı mı görüyorsun?
-        alert("Giriş yapılamadı: " + error.message);
+        console.error("Giriş hatası (loginButton):", error);
+        alert("Giriş sırasında bir sorun oluştu. Lütfen tekrar deneyin veya internet bağlantınızı kontrol edin.");
     }
 });
 
@@ -222,7 +237,8 @@ async function logout() {
         $("#main-app").hide();
         $("#login-screen").show();
         $("#nickname").val("");
-        $("#message-input-container").addClass("d-none-important");
+        // Eski message-input-container yerine Bootstrap modal gizleme
+        $('#messageModal').modal('hide'); 
         clearInterval(shoutInterval);
         $("#shout-text-display").text("Henüz haykırma yok.");
     } catch (error) {
@@ -238,7 +254,15 @@ async function sendMessage() {
         return;
     }
     const text = $("#message-input").val().trim();
-    if (!text) return alert("Mesaj boş olamaz!");
+    if (!text) {
+        alert("Mesaj boş olamaz!");
+        return;
+    }
+    // Opsiyonel: Karakter limiti kontrolü ekleyebilirsin
+    if (text.length > 500) { // Örneğin 500 karakter limiti
+        alert("Mesajınız en fazla 500 karakter olabilir.");
+        return;
+    }
 
     try {
         await addDoc(collection(db, "messages"), {
@@ -250,13 +274,18 @@ async function sendMessage() {
             reactions: {},
             replies: []
         });
-        $("#message-input").val("");
-        $("#message-input-container").addClass("d-none-important");
+        
+        $("#message-input").val(""); // Inputu temizle
+        
+        // Mesaj gönderildikten sonra modalı gizle
+        $('#messageModal').modal('hide'); 
+        
     } catch (error) {
         console.error("Mesaj gönderme hatası:", error);
         alert("Mesaj gönderilemedi.");
     }
 }
+
 
 // Tepki butonlarını render etme
 function renderReactions(msgId, reactions) {
@@ -306,116 +335,296 @@ async function react(messageId, emoji) {
     }
 }
 
-// Mesajları yükleme ve listeleme (Real-time dinleme)
-function loadMessages() {
-    const messagesRef = collection(db, "messages");
-    const q = query(messagesRef, orderBy("createdAt", "desc"));
 
-    onSnapshot(q, async (snapshot) => {
-        const messages = [];
-        const nicknamePromises = [];
+// MESAJLARI DOM'A BASAN FONKSİYON - BU EKSİKMİŞ, ŞİMDİ EKLİYORUZ
+function displayMessages(messages) {
+    const messageList = $("#message-list");
+    messageList.empty(); // Mevcut mesajları temizle
 
-        console.log("--- loadMessages Başladı ---");
-        console.log("Mesajlar Snapshot boş mu?", snapshot.empty);
-        console.log("Mesajlar Snapshot belge sayısı:", snapshot.size);
+    if (messages.length === 0) {
+        messageList.html('<p class="text-center text-muted" id="no-messages-text">Henüz mesaj yok.</p>');
+        return;
+    }
+    
+    // Eğer no-messages-text elementi varsa gizle
+    $("#no-messages-text").addClass("d-none"); // Bu id'ye sahip bir p etiketi HTML'de olmalı
 
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            messages.push({ id: doc.id, ...data });
-            nicknamePromises.push(getNicknameByUid(data.userUid));
-            (data.replies || []).forEach(reply => {
-                nicknamePromises.push(getNicknameByUid(reply.userUid));
-            });
-        });
+    messages.forEach(message => {
+        const repliesCount = (message.replies || []).length;
+        // uidToNicknameMap üzerinden kullanıcı bilgilerini al (daha önce Promise.all ile doldurulmuş olmalı)
+        const { nickname: displayUser, color: userColor } = uidToNicknameMap[message.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; 
 
-        await Promise.all(nicknamePromises);
-
-        console.log("Filtreleme sonrası 'messages' dizisi boyutu:", messages.length);
-
-        const totalPages = Math.ceil(messages.length / MESSAGES_PER_PAGE);
-        if (currentPage > totalPages) currentPage = totalPages || 1;
-
-        $("#pagination").empty();
-        for (let i = 1; i <= totalPages; i++) {
-            const active = i === currentPage ? "active" : "";
-            $("#pagination").append(`<li class="page-item ${active}"><a href="#" class="page-link">${i}</a></li>`);
-        }
-
-        const start = (currentPage - 1) * MESSAGES_PER_PAGE;
-        const pageMessages = messages.slice(start, start + MESSAGES_PER_PAGE);
-
-        const $list = $("#message-list").empty();
-
-        if (pageMessages.length === 0) {
-            $list.append("<p class='text-center text-muted mt-3'>Henüz mesaj yok.</p>");
-            return;
-        }
-
-        for (const msg of pageMessages) {
-            const repliesCount = (msg.replies || []).length;
-            const { nickname: displayUser, color: userColor } = uidToNicknameMap[msg.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" }; // Cache'den al
-
-            const msgEl = $(`
-                <div class="message">
-                    <div><strong style="color: ${userColor};">${displayUser}</strong> <small class="text-muted">${formatDateTime(msg.createdAt)}</small></div>
-                    <div class="mt-1 mb-2">${msg.text}</div>
-                    <div class="reactions">${renderReactions(msg.id, msg.reactions)}</div>
-                    <div class="mt-1">
-                        ${repliesCount > 0 ? `<button class="btn btn-sm btn-link p-0 view-replies-toggle" data-message-id="${msg.id}" data-replies-count="${repliesCount}">Yanıtlar (${Math.min(5, repliesCount)})</button>` : ''}
-                        <button class="btn btn-sm btn-link p-0 add-reply-btn" data-message-id="${msg.id}">Yeni Yanıt Ekle</button>
-                    </div>
-                    <div class="replies-container" style="display:none;"></div>
+        const messageElement = $(`
+            <div class="message p-3 mb-2 rounded shadow-sm">
+                <div class="d-flex align-items-center mb-2">
+                    <span class="badge" style="background-color: ${userColor}; margin-right: 8px;">${displayUser}</span>
+                    <small class="text-muted">${formatDateTime(message.createdAt)}</small>
                 </div>
-            `);
+                <p class="mb-2">${message.text}</p>
+                <div class="reactions">
+                    ${renderReactions(message.id, message.reactions)}
+                </div>
+                <div class="mt-1">
+                    ${repliesCount > 0 ? `<button class="btn btn-sm btn-link p-0 view-replies-toggle" data-message-id="${message.id}" data-replies-count="${repliesCount}">Yanıtlar (${Math.min(5, repliesCount)})</button>` : ''}
+                    <button class="btn btn-sm btn-link p-0 add-reply-btn" data-message-id="${message.id}">Yeni Yanıt Ekle</button>
+                </div>
+                <div class="replies-container" style="display:none;"></div>
+            </div>
+        `);
 
-            const $repliesContainer = msgEl.find(".replies-container");
-            if (repliesCount > 0) {
-                const repliesToShow = (msg.replies || []).slice(-5);
-                for (const rep of repliesToShow) {
-                    const { nickname: displayReplyUser, color: replyUserColor } = uidToNicknameMap[rep.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
-                    const repEl = $(`
-                        <div class="reply-message mt-1 p-2 rounded" style="background:#444; color:#eee;">
-                            <strong style="color: ${replyUserColor};">${displayReplyUser}</strong> <small class="text-muted">${formatDateTime(rep.createdAt)}</small><br/>
-                            ${rep.text}
-                        </div>
-                    `);
-                    $repliesContainer.append(repEl);
-                }
+        // Yanıtları konteynere ekle (sadece son 5 tanesi)
+        const $repliesContainer = messageElement.find(".replies-container");
+        if (repliesCount > 0) {
+            const repliesToShow = (message.replies || []).slice(-5); // En son 5 yanıtı göster
+            for (const rep of repliesToShow) {
+                const { nickname: displayReplyUser, color: replyUserColor } = uidToNicknameMap[rep.userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
+                const repEl = $(`
+                    <div class="reply-message mt-1 p-2 rounded" style="background:#444; color:#eee;">
+                        <strong style="color: ${replyUserColor};">${displayReplyUser}</strong> <small class="text-muted">${formatDateTime(rep.createdAt)}</small><br/>
+                        ${rep.text}
+                    </div>
+                `);
+                $repliesContainer.append(repEl);
             }
-            $list.append(msgEl);
         }
+        messageList.append(messageElement);
+    });
 
-        $("#pagination").off("click", ".page-link").on("click", ".page-link", function (e) {
-            e.preventDefault();
-            currentPage = parseInt($(this).text());
-        });
+    // Olay dinleyicilerini burada bağla (her mesaj listesi yenilendiğinde)
+    // Sadece .message-list içindeki elementlere dinleyici ekliyoruz
+    messageList.off('click', '.react-btn').on('click', '.react-btn', function() {
+        const messageId = $(this).data('message-id');
+        const emoji = $(this).data('emoji');
+        react(messageId, emoji);
+    });
 
-        $("#message-list").off('click', '.react-btn').on('click', '.react-btn', function () {
-            const messageId = $(this).data('message-id');
-            const emoji = $(this).data('emoji');
-            react(messageId, emoji);
-        });
+    messageList.off('click', '.view-replies-toggle').on('click', '.view-replies-toggle', function() {
+        const $button = $(this);
+        const $repliesContainer = $button.closest(".message").find(".replies-container");
+        const repliesCount = $button.data('replies-count');
 
-        $("#message-list").off('click', '.view-replies-toggle').on('click', '.view-replies-toggle', function () {
-            const $button = $(this);
-            const $repliesContainer = $button.closest(".message").find(".replies-container");
-            const repliesCount = $button.data('replies-count');
-
-            $repliesContainer.slideToggle(400, function() {
-                if ($(this).is(":visible")) {
-                    $button.text("Yanıtları Gizle");
-                } else {
-                    $button.text(`Yanıtlar (${Math.min(5, repliesCount)})`);
-                }
-            });
-        });
-
-        $("#message-list").off('click', '.add-reply-btn').on('click', '.add-reply-btn', function () {
-            const messageId = $(this).data('message-id');
-            addReply(messageId);
+        $repliesContainer.slideToggle(400, function() {
+            if ($(this).is(":visible")) {
+                $button.text("Yanıtları Gizle");
+            } else {
+                $button.text(`Yanıtlar (${Math.min(5, repliesCount)})`);
+            }
         });
     });
+
+    messageList.off('click', '.add-reply-btn').on('click', '.add-reply-btn', function() {
+        const messageId = $(this).data('message-id');
+        addReply(messageId);
+    });
 }
+
+
+
+
+// Mesajları yükleme ve listeleme (Real-time dinleme ve Sayfalama)
+async function loadMessages(direction = 'initial') {
+    if (unsubscribeMessages) {
+        unsubscribeMessages(); // Önceki dinleyiciyi kapat
+        console.log("Önceki onSnapshot dinleyicisi kapatıldı.");
+    }
+
+    const messagesRef = collection(db, "messages");
+    let q;
+    let startDoc = null; // Sorgunun başlayacağı belge
+    let queryDirection = "desc"; // Firestore sıralama yönü
+
+    try {
+        if (direction === 'initial') {
+            currentPage = 1;
+            messagePageHistory = [null]; // Geçmişi temizle ve ilk elemanı null yap
+            q = query(
+                messagesRef,
+                orderBy("createdAt", "desc"),
+                limit(MESSAGES_PER_PAGE)
+            );
+            console.log("İlk sayfa yükleniyor...");
+
+        } else if (direction === 'next') {
+            // lastVisibleMessageDoc'un mevcut ve geçerli olduğundan emin ol
+            if (!lastVisibleMessageDoc) {
+                console.warn("Sonraki sayfa için lastVisibleMessageDoc bulunamadı. Muhtemelen son sayfadasınız.");
+                updatePaginationButtons(true, false); // Sadece önceki butonu aktif
+                return;
+            }
+            startDoc = lastVisibleMessageDoc;
+            currentPage++;
+            q = query(
+                messagesRef,
+                orderBy("createdAt", "desc"),
+                startAfter(startDoc), // Bir önceki sayfanın son belgesinden sonra başla
+                limit(MESSAGES_PER_PAGE)
+            );
+            console.log(`Sonraki sayfa yükleniyor. Mevcut sayfa: ${currentPage}`);
+
+        } else if (direction === 'prev') {
+            if (currentPage <= 1) {
+                console.warn("İlk sayfadasın, daha fazla geri gidemezsin.");
+                updatePaginationButtons(false, true); // Sadece sonraki butonu aktif
+                return;
+            }
+            currentPage--;
+            // prev için, o sayfadaki en yeni mesajı almamız lazım (yani bir önceki sayfanın ilk mesajı)
+            // messagePageHistory[currentPage -1] bize o sayfanın ilk belgesini vermeli
+            // Eğer currentPage 1 ise, messagePageHistory[0] yani null olacak, bu da startAfter'ı kullanmamamız gerektiği anlamına gelir.
+            startDoc = messagePageHistory[currentPage -1]; 
+
+            // Eğer prevStartDoc null ise (yani ilk sayfaya dönüyorsak), startAfter kullanmayız
+            // ve direkt limit ile ilk sayfayı çekeriz.
+            if (startDoc) {
+                 q = query(
+                    messagesRef,
+                    orderBy("createdAt", "desc"),
+                    startAfter(startDoc), 
+                    limit(MESSAGES_PER_PAGE)
+                );
+            } else { // İlk sayfaya geri dönüyoruz
+                q = query(
+                    messagesRef,
+                    orderBy("createdAt", "desc"),
+                    limit(MESSAGES_PER_PAGE)
+                );
+            }
+           
+            console.log(`Önceki sayfa yükleniyor. Mevcut sayfa: ${currentPage}`);
+        }
+
+        // onSnapshot dinleyicisini burada başlat
+        unsubscribeMessages = onSnapshot(q, async (snapshot) => {
+            const messages = [];
+            const nicknamePromises = [];
+
+            if (snapshot.empty) {
+                if (direction === 'next' || direction === 'prev') {
+                    console.log(`Sayfa ${currentPage} için veri yok. Sayfa numarası geri alındı.`);
+                    // Eğer boş snapshot gelirse ve 'next' veya 'prev' yönündeysek, sayfa numarasını geri al.
+                    // 'initial' ise ve boşsa 'Henüz mesaj yok' gösteririz.
+                    if (direction === 'next') currentPage--;
+                    else if (direction === 'prev') currentPage++; // Geri alırken bir hata oluştuysa ileri al
+                    
+                    // Eğer current page 0'a düşerse 1 yap.
+                    if (currentPage < 1) currentPage = 1;
+
+                    updatePaginationButtons(currentPage > 1, false); // Sadece önceki butonu aktif olabilir
+                    updatePaginationNumbers();
+                    // Mesaj listesini temizle veya önceki duruma getir
+                    $("#message-list").html('<p class="text-center text-muted" id="no-messages-text">Mesaj yüklenemedi veya bu sayfada mesaj yok.</p>');
+                    return;
+                } else if (direction === 'initial') {
+                    $("#message-list").html('<p class="text-center text-muted" id="no-messages-text">Henüz mesaj yok.</p>');
+                    updatePaginationButtons(false, false);
+                    updatePaginationNumbers();
+                    return;
+                }
+            }
+
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                messages.push({ id: doc.id, ...data });
+                nicknamePromises.push(getNicknameByUid(data.userUid));
+                (data.replies || []).forEach(reply => {
+                    nicknamePromises.push(getNicknameByUid(reply.userUid));
+                });
+            });
+
+            await Promise.all(nicknamePromises); 
+
+            displayMessages(messages); 
+
+            // Sayfa geçişleri için son ve ilk görünen belgeleri sakla
+            if (snapshot.docs.length > 0) {
+                firstVisibleMessageDoc = snapshot.docs[0];
+                lastVisibleMessageDoc = snapshot.docs[snapshot.docs.length - 1];
+
+                // Eğer 'next' yönünde yeni bir sayfaya geçtiysek
+                // veya 'initial' yükleme ile ilk sayfayı yüklediysek,
+                // ve bu sayfanın başlangıç belgesi (yani bir önceki sayfanın son belgesi) henüz history'de yoksa ekle.
+                // messagePageHistory'ye her zaman bir sonraki sayfanın başlangıç belgesini (yani bu sayfanın son belgesini) ekliyoruz.
+                // Eğer ileri gidiyorsak, şimdiki sayfanın son belgesini bir sonraki sayfanın başlangıcı olarak kaydet.
+                if (direction === 'next' && messagePageHistory.length < currentPage + 1) {
+                    messagePageHistory.push(lastVisibleMessageDoc); 
+                    // currentPage'den bir sonraki dizine ekliyoruz ki, o dizine ulaştığımızda
+                    // doğru startAfter belgesini bulabilelim.
+                } else if (direction === 'initial' && messagePageHistory.length === 1) {
+                    // İlk yüklemede, ilk sayfanın son belgesini, 2. sayfanın başlangıç belgesi olarak kaydet.
+                    messagePageHistory.push(lastVisibleMessageDoc);
+                }
+                 // Eğer prev yapıyorsak ve messagePageHistory'de zaten varsa ekleme yapmayız.
+                 // Eğer prev ile currentPage'i düşürdüysek ve o index'teki belge null değilse, zaten history'de var demektir.
+            } else { // Hiç mesaj yoksa lastVisibleMessageDoc ve firstVisibleMessageDoc'u sıfırla
+                lastVisibleMessageDoc = null;
+                firstVisibleMessageDoc = null;
+            }
+
+            // Sonraki sayfanın olup olmadığını kontrol etmek için ekstra bir sorgu
+            let hasNextPage = false;
+            if (lastVisibleMessageDoc) {
+                const nextQueryForCheck = query(
+                    messagesRef,
+                    orderBy("createdAt", "desc"),
+                    startAfter(lastVisibleMessageDoc),
+                    limit(1) 
+                );
+                const nextSnapshotCheck = await getDocs(nextQueryForCheck);
+                hasNextPage = !nextSnapshotCheck.empty; 
+            }
+
+            // Önceki sayfanın olup olmadığını kontrol et
+            const hasPrevPage = currentPage > 1;
+
+            updatePaginationButtons(hasPrevPage, hasNextPage);
+            updatePaginationNumbers(); 
+
+            console.log(`Sayfa ${currentPage} yüklendi. Mesaj sayısı: ${messages.length}`);
+            console.log("lastVisibleMessageDoc ID:", lastVisibleMessageDoc?.id || "Yok");
+            console.log("firstVisibleMessageDoc ID:", firstVisibleMessageDoc?.id || "Yok");
+            console.log("messagePageHistory IDs:", messagePageHistory.map(doc => doc ? doc.id : 'null'));
+
+        }); 
+
+    } catch (error) {
+        console.error("Mesajlar yüklenirken hata:", error);
+        alert("Mesajlar yüklenirken bir hata oluştu.");
+    }
+}
+
+// Sayfalama butonlarının durumunu güncelleyen fonksiyon
+function updatePaginationButtons(hasPrev, hasNext) {
+    const prevBtn = $("#prev-page-item");
+    const nextBtn = $("#next-page-item");
+
+    if (hasPrev) {
+        prevBtn.removeClass("disabled");
+        prevBtn.find("a").attr("aria-disabled", "false");
+    } else {
+        prevBtn.addClass("disabled");
+        prevBtn.find("a").attr("aria-disabled", "true");
+    }
+
+    if (hasNext) {
+        nextBtn.removeClass("disabled");
+        nextBtn.find("a").attr("aria-disabled", "false");
+    } else {
+        nextBtn.addClass("disabled");
+        nextBtn.find("a").attr("aria-disabled", "true");
+    }
+}
+
+// Sayfa numaralarını güncelleyen fonksiyon
+// Bu fonksiyon artık tüm sayfa sayılarını değil, sadece "Önceki" ve "Sonraki" butonlarını gösterecek.
+// Sayfa numaralarını güncelleyen fonksiyon
+function updatePaginationNumbers() {
+    // Sadece mevcut sayfa numarasını gösteren elementin içeriğini güncelle
+    $("#current-page-display .page-link").text(currentPage);
+
+    // Diğer sayfa numaralarını dinamik olarak oluşturmak istersen burayı geliştirebiliriz.
+    // Şimdilik sadece "Önceki - 1 - Sonraki" yapısına odaklanalım.
+}
+
 
 // Yanıt ekleme
 async function addReply(messageId) {
@@ -433,7 +642,7 @@ async function addReply(messageId) {
                     nickname: currentUserNickname,
                     color: currentUserColor,
                     text: replyText.trim(),
-                    createdAt: new Date()
+                    createdAt: serverTimestamp() // Sunucu zaman damgasını kullan
                 })
             });
         } catch (error) {
@@ -446,7 +655,10 @@ async function addReply(messageId) {
 // En çok tepki alan mesajları yükleme
 function loadTopMessages() {
     const messagesRef = collection(db, "messages");
-    const q = query(messagesRef, orderBy("createdAt", "desc"));
+    // Tüm mesajları çekmek yerine, sadece son N mesajı çekip onların arasından en çok tepki alanları bulmak daha mantıklı olabilir.
+    // Ancak mevcut logic'e göre tümü çekiliyor, bu da çok mesajda yavaşlayabilir.
+    // Eğer Firestore'da aggregation yapmayacaksak, bu haliyle devam edelim.
+    const q = query(messagesRef, orderBy("createdAt", "desc")); // order by en yeniyi getirir, top reaksiyon için uygun değil
 
     onSnapshot(q, async (snapshot) => {
         let messages = [];
@@ -460,6 +672,8 @@ function loadTopMessages() {
 
         await Promise.all(nicknamePromises);
 
+        // Önemli: Eğer tüm mesajlar çekiliyorsa ve çok fazlaysa bu sorted işlemi çok yavaşlar.
+        // Genellikle ilk 100-200 mesajdan en çok tepki alanı bulmak yeterlidir.
         const sorted = messages.slice().sort((a, b) => getTotalReactions(b) - getTotalReactions(a)).slice(0, 2);
         if (sorted.length === 0) {
             $("#top-messages-list").text("Henüz yok.");
@@ -478,6 +692,9 @@ function loadTopMessages() {
         const html = (await Promise.all(htmlPromises)).join("");
         $("#top-messages-list").html(html);
 
+        // Event listener'lar her zaman listenin dışına ve bir kere bağlanmalı.
+        // off().on() kullanımı bu sorunu çözse de, DOM'a sürekli aynı elementleri basmak maliyetli.
+        // Bu yüzden eğer #top-messages-list içinde `.react-btn` dinamik olarak değişiyorsa bu OK.
         $("#top-messages-list").off('click', '.react-btn').on('click', '.react-btn', function() {
             const messageId = $(this).data('message-id');
             const emoji = $(this).data('emoji');
@@ -535,7 +752,10 @@ async function setDailyQuestion() {
 // Eski günlük soru cevaplarını temizleme
 async function clearOldAnswers() {
     const answersRef = collection(db, "answers");
-    const q = query(answersRef, where("question", "!=", currentDailyQuestion)); // Mevcut sorudan farklı olan tüm cevapları hedefle
+    // currentDailyQuestion ile aynı olmayan tüm cevapları silmek yerine
+    // belirli bir tarihten eski olanları silmek daha güvenli olabilir.
+    // Ancak bu haliyle devam ediyoruz, logic bu şekilde.
+    const q = query(answersRef, where("question", "!=", currentDailyQuestion)); 
 
     try {
         const snapshot = await getDocs(q);
@@ -654,58 +874,197 @@ function loadAnswers() {
 }
 
 // Yeni fonksiyon: Eski mesajları ve haykırmaları temizle (24 saatten eski olanlar)
-// Verileri temizleme fonksiyonu (cleanupOldData)
-// Verileri temizleme fonksiyonu (cleanupOldData)
 async function cleanupOldData() {
     console.log("cleanupOldData çalışıyor...");
     const now = new Date();
-    const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    // Milisaniye cinsinden 24 saat
+    const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
+    const twentyFourHoursAgo = new Date(now.getTime() - twentyFourHoursInMs);
     console.log("Şu anki zaman:", now.toLocaleString());
     console.log("24 saat önceki zaman (silme eşiği):", twentyFourHoursAgo.toLocaleString());
 
-    const collectionsToClean = ['messages', 'shouts', 'secret_room_messages'];
+    const collectionsToClean = ['messages', 'shouts', 'secret_room_messages']; // 'secret_room_messages' ekledim
 
     for (const collectionName of collectionsToClean) {
         console.log(`--- Koleksiyon '${collectionName}' için temizlik başlatılıyor ---`);
-        console.log(`Sorgu: createdAt < ${twentyFourHoursAgo.toLocaleString()}`); // Sorgu eşiğini logla
-
+        
+        // Firestore Timestamp nesnesi ile karşılaştırmak için Date objesini kullanmak doğru.
+        // Firestore otomatik olarak Date objelerini Timestamp'e çevirir.
         const q = query(collection(db, collectionName), where("createdAt", "<", twentyFourHoursAgo));
+        
         let querySnapshot;
         try {
             querySnapshot = await getDocs(q);
         } catch (error) {
             console.error(`Koleksiyon '${collectionName}' için belge alınırken hata oluştu:`, error);
-            // Hata durumunda döngüden çıkma, diğer koleksiyonlara devam et
             continue;
         }
-
 
         if (querySnapshot.empty) {
             console.log(`Koleksiyon '${collectionName}' içinde temizlenecek eski veri bulunamadı.`);
             continue;
         }
 
-        console.log(`Koleksiyon '${collectionName}' içinde ${querySnapshot.size} adet eski belge bulundu.`);
-        // Bulunan belgelerin ID'lerini ve createdAt tarihlerini logla
-        querySnapshot.docs.forEach(docSnapshot => {
-            const data = docSnapshot.data();
-            console.log(`  - Belge ID: ${docSnapshot.id}, createdAt: ${data.createdAt ? data.createdAt.toDate().toLocaleString() : 'Yok'}`);
-        });
-
+        console.log(`Koleksiyon '${collectionName}' içinde ${querySnapshot.size} adet eski veri bulunuyor. Siliniyor...`);
         const batch = writeBatch(db);
-        querySnapshot.docs.forEach((doc) => {
-            batch.delete(doc.ref);
+        querySnapshot.docs.forEach(docSnapshot => {
+            batch.delete(doc(db, collectionName, docSnapshot.id));
         });
 
         try {
             await batch.commit();
-            console.log(`Koleksiyon '${collectionName}' içinde ${querySnapshot.size} adet eski belge başarıyla silindi.`);
+            console.log(`Koleksiyon '${collectionName}' için ${querySnapshot.size} adet belge başarıyla silindi.`);
         } catch (error) {
-            console.error(`Koleksiyon '${collectionName}' içindeki eski belgeler silinirken batch commit hatası oluştu:`, error);
+            console.error(`Koleksiyon '${collectionName}' için belgeler silinirken hata oluştu:`, error);
         }
-        console.log(`--- Koleksiyon '${collectionName}' temizlik tamamlandı ---`);
     }
 }
+
+
+// onAuthStateChanged dinleyicisi
+onAuthStateChanged(auth, async (user) => {
+    if (user) {
+        currentUserUid = user.uid;
+        // Kullanıcı anonim de olsa veritabanında bir kaydının olmasını sağlarız
+        const userDocRef = doc(db, "users", currentUserUid);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            currentUserNickname = userData.nickname;
+            currentUserColor = userData.color;
+            console.log("Kullanıcı zaten giriş yapmış: ", currentUserNickname);
+        } else {
+            // Eğer anonim kullanıcı ilk kez geliyorsa ve bir nickname'i yoksa
+            // nickname alma ekranına geri yönlendir.
+            // Bu durumda loginButton click event'i nickname alıp setDoc yapacak.
+            console.log("Anonim kullanıcı girişi, ancak profil bilgisi yok.");
+            $("#main-app").hide();
+            $("#login-screen").show();
+            return;
+        }
+
+        // Kullanıcı giriş yaptıysa ana uygulama görünür
+        $("#login-screen").hide();
+        $("#main-app").show();
+        $("#welcome-msg").text(`Hoş geldin, ${currentUserNickname}!`);
+        loadInitialData(); // Giriş yapıldıktan sonra tüm verileri yükle
+    } else {
+        // Kullanıcı çıkış yaptıysa veya hiç giriş yapmadıysa
+        console.log("Kullanıcı çıkış yaptı veya giriş yapmadı.");
+        $("#main-app").hide();
+        $("#login-screen").show();
+    }
+});
+
+// Tüm başlangıç verilerini yükleyen ana fonksiyon
+function loadInitialData() {
+    loadTopMessages();
+    loadShouts(); // Eğer shouts varsa, onu da yükle
+    setDailyQuestion(); // Günlük soruyu yükle ve cevapları getir
+    loadMessages('initial'); // Sayfalama ile mesajları yükle
+    // Diğer başlangıçta yüklenmesi gereken fonksiyonlar buraya eklenebilir.
+	    countdownToMidnight(); // Geri sayımı başlat (ve gece yarısı temizliği/soru güncellemesi yapar)
+
+}
+
+// Bootstrap modal ve diğer event listener'lar
+$(document).ready(function() {
+    // "Mesaj Yaz" modalını açma butonu
+    $("#toggle-message-input-btn").on("click", () => {
+        $('#messageModal').modal('show');
+        $("#message-input").val(''); // Input'u temizle
+    });
+
+    // Mesaj Gönder butonu olay dinleyicisi (modal içinde)
+    $("#send-message-btn").on("click", sendMessage);
+
+    // Çıkış butonu
+    $("#logout-btn").on("click", logout);
+
+    // Günlük soru cevaplama butonu
+    $("#submit-answer-btn").on("click", submitAnswer);
+
+    // Temizleme işlevini belirli aralıklarla çalıştırmak için (eğer kullanılıyorsa)
+    // setInterval(cleanupOldData, 60 * 60 * 1000); // Her saat başı çalıştır
+    // İlk çalıştırma için (eğer kullanılıyorsa)
+    // cleanupOldData();
+
+    // SAYFALAMA BUTONLARI OLAY DİNLEYİCİLERİ
+    // Pagination butonları HTML'de sabit olduğu için, ID'lerine direkt bağlama yapıyoruz.
+    // Bu, önceki .page-link'e genel bağlamadan daha spesifik ve yönetilebilirdir.
+    
+    // "Önceki" butonu
+    $("#prev-page-item").on("click", (e) => {
+        e.preventDefault();
+        // Sadece disabled değilse çalıştır
+        if (!$("#prev-page-item").hasClass("disabled")) {
+            loadMessages('prev');
+        }
+    });
+
+    // "Sonraki" butonu
+    $("#next-page-item").on("click", (e) => {
+        e.preventDefault();
+        // Sadece disabled değilse çalıştır
+        if (!$("#next-page-item").hasClass("disabled")) {
+            loadMessages('next');
+        }
+    });
+
+    // Sayı butonları (Önceki - 1 - Sonraki yapısını kullandığımız için şu anlık yok,
+    // ama ilerde eklerseniz buraya ekleyebilirsiniz)
+    // Örneğin: $("#page-number-1-btn").on("click", function() { loadMessages('goToPage', 1); });
+
+    // Sayfa ilk yüklendiğinde ve kullanıcı oturumu kontrol edildiğinde
+    // loadInitialData() onAuthStateChanged içinde çağrıldığı için burada çağırmıyoruz
+    // Ancak sen test etmek istersen veya onAuthStateChanged dışında bir yerde çağrıyorsan:
+    // loadInitialData(); // Kullanıcının durumuna göre ilk veriyi yükler
+    
+    // Eğer onAuthStateChanged dışında direkt mesajları yüklemek istiyorsan,
+    // mesela kullanıcı girişi sonrası direkt buraya geliniyorsa:
+    // loadMessages('initial'); // İlk mesaj sayfasını yükle
+
+    // onAuthStateChanged dinleyicisini burada tanımlamak yerine genellikle
+    // Firebase auth setup dosyasında veya daha genel bir auth.js dosyasında tutulur.
+    // Ancak örnek olması açısından buraya da eklenebilir.
+    firebase.auth().onAuthStateChanged(function(user) {
+        if (user) {
+            // Kullanıcı giriş yapmış.
+            console.log("Kullanıcı giriş yapmış:", user.uid);
+            // Kullanıcı arayüzünü güncelle (login/logout butonları vs.)
+            $("#logged-in-user-info").text(`Giriş Yapan: ${user.email}`);
+            $("#logout-btn").show();
+            $("#login-btn").hide();
+            $("#shout-btn").show();
+            $("#toggle-message-input-btn").show();
+            
+            // Kullanıcı girişi başarılı olduğunda ilk mesajları yükle
+            loadMessages('initial'); 
+            
+            // Nickname'i yükle
+            loadUserNickname(); 
+            
+            // Günlük soruyu yükle (eğer varsa)
+            loadDailyQuestion();
+
+        } else {
+            // Kullanıcı çıkış yapmış veya giriş yapmamış.
+            console.log("Kullanıcı çıkış yapmış.");
+            $("#logged-in-user-info").text("Giriş Yapmadınız");
+            $("#logout-btn").hide();
+            $("#login-btn").show();
+            $("#shout-btn").hide();
+            $("#toggle-message-input-btn").hide();
+            
+            // Kullanıcı çıkış yaptığında mesaj listesini temizle veya giriş yapma mesajı göster
+            $("#message-list").html('<p class="text-center text-muted">Mesajları görmek için giriş yapmalısınız.</p>');
+            updatePaginationButtons(false, false); // Pagination'ı kapat
+            updatePaginationNumbers(); // Sayfa numarasını sıfırla/gizle
+        }
+    });
+});
+
 
 // Gece Yarısına Kadar Geri Sayım ve İşlemler
 function countdownToMidnight() {
@@ -750,242 +1109,143 @@ function countdownToMidnight() {
 }
 
 
-// Haykırma rotasyonunu başlatma (Real-time dinleme)
-function startShoutRotation() {
-    const shoutsRef = collection(db, "shouts");
-    const q = query(shoutsRef, orderBy("createdAt", "desc"));
+// Haykırma mesajları fonksiyonları (buraya ekliyorum, senin kodunda yoktu ama çağırılıyor)
+// Bu fonksiyonların da tanımlı olması gerekiyor eğer çağırılıyorsa.
+// loadShouts() ve startShoutDisplay()
 
-    onSnapshot(q, async (snapshot) => {
-        shoutMessages = [];
+
+
+
+function loadShouts() { // startShoutDisplay yerine loadShouts ismini kullanıyoruz, tutarlılık için
+    const shoutsRef = collection(db, "shouts");
+    const q = query(shoutsRef, orderBy("createdAt", "desc"), limit(100)); // Son 100 haykırma
+
+    // Önceki interval'i temizle, aksi takdirde birden fazla interval çalışabilir
+    if (shoutInterval) {
+        clearInterval(shoutInterval);
+        shoutInterval = null;
+    }
+
+    onSnapshot(q, async (snapshot) => { // async anahtar kelimesini ekledik!
+        const tempShoutMessages = [];
         const nicknamePromises = [];
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            shoutMessages.push({ id: doc.id, ...data });
+            tempShoutMessages.push({ id: doc.id, ...data }); // Geçici listeye ekle, nickname henüz yok
+            // Her userUid için nickname ve color çekme promise'ini oluştur
             nicknamePromises.push(getNicknameByUid(data.userUid));
         });
 
-        await Promise.all(nicknamePromises);
+        // Tüm nicknamePromises'in tamamlanmasını bekle
+        const resolvedUserProfiles = await Promise.all(nicknamePromises);
 
-        if (shoutInterval) clearInterval(shoutInterval);
-        shoutIndex = 0;
+        // Şimdi temShoutMessages'ı doldurulmuş nickname ve color ile güncelle
+        shoutMessages = tempShoutMessages.map((shout, index) => {
+            const userProfile = resolvedUserProfiles[index];
+            return {
+                ...shout,
+                nickname: userProfile.nickname,
+                color: userProfile.color
+            };
+        }).reverse(); // En eski en üstte olacak şekilde sırala
 
-        if (shoutMessages.length === 0) {
+        if (shoutMessages.length > 0) {
+            // Eğer daha önce bir interval varsa durdurup yeniden başlat
+            if (shoutInterval) {
+                clearInterval(shoutInterval);
+            }
+            // İlk haykırmayı hemen göster ve interval'i başlat
+            displayNextShout();
+            shoutInterval = setInterval(displayNextShout, 5000); // Her 5 saniyede bir değiştir
+        } else {
             $("#shout-text-display").text("Henüz haykırma yok.");
-            return;
+            clearInterval(shoutInterval);
+            shoutInterval = null;
         }
-
-        const { nickname: firstShoutUser, color: firstShoutColor } = uidToNicknameMap[shoutMessages[shoutIndex].userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
-        $("#shout-text-display").html(`<span style="color: ${firstShoutColor};">${firstShoutUser}</span>: ${shoutMessages[shoutIndex].text}`).show();
-
-        shoutInterval = setInterval(async () => {
-            shoutIndex++;
-            if (shoutIndex >= shoutMessages.length) shoutIndex = 0;
-
-            const { nickname: currentShoutUser, color: currentShoutColor } = uidToNicknameMap[shoutMessages[shoutIndex].userUid] || { nickname: "Bilinmeyen Kullanıcı", color: "#CCCCCC" };
-            $("#shout-text-display").fadeOut(500, function() {
-                $(this).html(`<span style="color: ${currentShoutColor};">${currentShoutUser}</span>: ${shoutMessages[shoutIndex].text}`).fadeIn(500);
-            });
-        }, 3000);
+    }, (error) => {
+        console.error("Haykırma mesajları dinlenirken hata:", error);
+        $("#shout-text-display").text("Haykırmalar yüklenemedi.");
+        clearInterval(shoutInterval);
+        shoutInterval = null;
     });
 }
 
-// Haykırma modalını açma
-function openShoutModal() {
-    const shoutModal = new bootstrap.Modal(document.getElementById('shoutModal'));
-    //$("#shout-input").val('');
-    shoutModal.show();
+// displayNextShout fonksiyonun zaten doğru, varsayılan değer olarak "Anonim" veya "Bilinmeyen" kullanmalı
+// const displayUser = currentShout.nickname || "Anonim"; 
+// Sadece `moment` kütüphanesinin HTML'e ekli olduğundan emin ol.
+
+function startShoutDisplay() {
+    if (shoutInterval) {
+        clearInterval(shoutInterval);
+    }
+    if (shoutMessages.length === 0) {
+        $("#shout-text-display").text("Henüz haykırma yok.");
+        return;
+    }
+
+    shoutIndex = 0;
+    displayNextShout(); // İlk haykırmayı hemen göster
+
+    shoutInterval = setInterval(() => {
+        displayNextShout();
+    }, 5000); // Her 5 saniyede bir değiştir
 }
 
-// Haykırma mesajı gönderme
-async function sendShout() {
+function displayNextShout() {
+    if (shoutMessages.length === 0) {
+        $("#shout-text-display").text("Henüz haykırma yok.");
+        clearInterval(shoutInterval);
+        return;
+    }
+    const currentShout = shoutMessages[shoutIndex];
+    const displayUser = currentShout.nickname || "Anonim";
+    const userColor = currentShout.color || "#CCCCCC";
+
+    const shoutHtml = `
+        <span class="badge" style="background-color: ${userColor}; margin-right: 5px;">${displayUser}</span>
+        ${currentShout.text}
+        <small class="text-muted ms-2">${moment(currentShout.createdAt.toDate()).fromNow()}</small>
+    `;
+    $("#shout-text-display").html(shoutHtml);
+
+    shoutIndex = (shoutIndex + 1) % shoutMessages.length;
+}
+
+// "Haykır" butonu ve modalı
+$("#shout-btn").on("click", () => {
+        $('#shoutModal').modal('show');
+        $("#shout-input").val(''); // Input'u temizle
+    });
+
+$("#send-shout-btn").on("click", async () => {
     if (!currentUserUid) {
         alert("Haykırmak için giriş yapmalısın!");
         return;
     }
     const shoutText = $("#shout-input").val().trim();
     if (!shoutText) {
-        alert("Haykırmak istediğin mesaj boş olamaz!");
+        alert("Haykırma boş olamaz!");
         return;
     }
-    if (shoutText.length > 150) {
-        alert("Haykırma mesajı en fazla 150 karakter olabilir.");
+    if (shoutText.length > 200) {
+        alert("Haykırma en fazla 200 karakter olabilir!");
         return;
     }
 
     try {
         await addDoc(collection(db, "shouts"), {
+            text: shoutText,
             userUid: currentUserUid,
             nickname: currentUserNickname,
             color: currentUserColor,
-            text: shoutText,
             createdAt: serverTimestamp()
         });
         $("#shout-input").val("");
-	shoutModal.hide();
-        bootstrap.Modal.getInstance(document.getElementById('shoutModal')).hide();
+        $('#shoutModal').modal('hide');
+        console.log("Haykırma gönderildi.");
     } catch (error) {
         console.error("Haykırma gönderme hatası:", error);
         alert("Haykırma gönderilemedi.");
     }
-}
-
-// Uygulama başlangıcında çalışacak fonksiyon (jQuery document ready)
-// Yeni fonksiyon: Uygulama başlangıcında yüklenmesi gereken tüm verileri ve işlevleri başlatır
-async function loadInitialData() {
-    console.log("loadInitialData: Uygulama başlangıç verileri yükleniyor...");
-    await setDailyQuestion(); // Günlük soruyu ayarla (ve eski cevapları temizler)
-    loadMessages(); // Ana sayfa mesajlarını yükle
-    //loadTopMessages(); // Top mesajları yükle
-    startShoutRotation(); // Haykırma rotasyonunu başlat
-    countdownToMidnight(); // Geri sayımı başlat (ve gece yarısı temizliği/soru güncellemesi yapar)
-}
-
-// Uygulama başlangıcında çalışacak fonksiyon (jQuery document ready)
-$(function () {
-    $("#message-input-container").addClass("d-none-important");
-
-     onAuthStateChanged(auth, async (user) => {
-        console.log("onAuthStateChanged tetiklendi. user:", user ? user.uid : "null");
-
-        if (user) {
-            // Kullanıcı zaten oturum açmış (veya oturumu sürdürülmüş)
-            currentUserUid = user.uid;
-            console.log("Kullanıcı durumu: GİRİŞ YAPILMIŞ veya OTURUM SÜRDÜRÜLMÜŞ.", "UID:", currentUserUid);
-
-            const userDocRef = doc(db, "users", currentUserUid);
-            const userDocSnap = await getDoc(userDocRef);
-
-            if (userDocSnap.exists()) {
-                const userData = userDocSnap.data();
-                currentUserNickname = userData.nickname;
-                currentUserColor = userData.color || generateRandomColor();
-                if (!userData.color) {
-                    await updateDoc(userDocRef, { color: currentUserColor });
-                }
-                console.log("Kullanıcı profili bulundu:", currentUserNickname);
-            } else {
-                // Bu durum normalde olmamalıdır, çünkü anonim girişte profil oluşturulur.
-                // Eğer buraya düşüyorsa, oturum bozulmuş veya eski bir anonim UID'ye denk gelmiş olabilir.
-                // Bu senaryoda kullanıcıdan tekrar nick istemek en doğrusu.
-                console.warn("Kullanıcı Auth'ta var ancak Firestore'da profili eksik. Yeniden nick girilmesi istenecek.");
-                currentUserNickname = null; // Nickname'i sıfırla ki giriş ekranı görünsün
-                currentUserColor = null;
-                $("#main-app").hide();
-                $("#login-screen").show();
-                $("#current-user-info").text("Giriş yapınız.");
-                return; // Bu durumda daha fazla işlem yapma, giriş ekranını bekle
-            }
-
-            $("#current-user-info").text(`Giriş yapıldı: ${currentUserNickname} (UID: ${currentUserUid})`);
-            $("#login-screen").hide();
-            $("#main-app").show();
-            
-            // Kullanıcı başarıyla yüklendiğinde/oluşturulduğunda tüm başlangıç verilerini yükle
-            loadInitialData(); // <-- Bu her başarılı girişte çalışır
-            
-        } else {
-            // Kullanıcı oturum açmamış (ilk yükleme veya çıkış yapılmış)
-            console.log("Kullanıcı durumu: ÇIKIŞ YAPILMIŞ.");
-            currentUserUid = null;
-            currentUserNickname = null;
-            currentUserColor = null;
-            $("#main-app").hide();
-            $("#login-screen").show(); // HER ZAMAN GİRİŞ EKRANINI GÖSTER
-            $("#current-user-info").text("Giriş yapınız.");
-            $("#message-input-container").addClass("d-none-important"); // Giriş yapılana kadar mesaj kutusunu gizle
-            
-            // Eğer burası bir "loginButton" click olayı DEĞİLSE, anonim giriş YAPMA!
-            // signInAnonymously çağrısını buradan kaldırın.
-            // Sadece kullanıcı "Giriş Yap" butonuna bastığında çağrılmalı.
-        }
-    });
-
-    // Login İşlemleri (loginButton click listener)
-    // BU KOD ZATEN MEVCUT OLMALI, BURADA DEĞİŞİKLİK YAPMA!
-    document.getElementById("loginButton").addEventListener("click", async () => {
-        const nickname = document.getElementById("nickname").value.trim();
-
-        if (!nickname) {
-            alert("Lütfen bir nick girin.");
-            return;
-        }
-
-        try {
-            // Anonim giriş sadece burada, kullanıcı butona bastığında tetiklenmeli
-            const userCredential = await signInAnonymously(auth);
-            const user = userCredential.user;
-            currentUserUid = user.uid;
-            currentUserNickname = nickname; // Kullanıcının girdiği nick'i kullan
-
-            let userColor = null;
-            const userDocRef = doc(db, "users", currentUserUid);
-            const userDocSnap = await getDoc(userDocRef);
-
-            if (userDocSnap.exists() && userDocSnap.data().color) {
-                userColor = userDocSnap.data().color;
-            } else {
-                userColor = generateRandomColor();
-            }
-            currentUserColor = userColor;
-
-            await setDoc(userDocRef, {
-                nickname: nickname, // Kullanıcının girdiği nick
-                color: userColor,
-                createdAt: serverTimestamp()
-            }, { merge: true });
-
-            document.getElementById("login-screen").style.display = "none";
-            document.getElementById("main-app").style.display = "block";
-            document.getElementById("welcome-msg").textContent = `Hoş geldin, ${nickname}!`;
-            
-            // Giriş başarılı olduğunda ilk verileri yükle
-            loadInitialData(); // <-- Bu da önemli
-            
-        } catch (error) {
-            console.error("Giriş hatası:", error);
-            alert("Giriş yapılamadı: " + error.message);
-        }
-    });
-
-
-    // Diğer Event Listeners (Bunlar zaten doğru yerde olmalı)
-    $("#logout-button").on("click", logout);
-    $("#message-send-btn").on("click", sendMessage);
-    $("#message-input").on("keypress", function (e) {
-        if (e.which == 13) {
-            sendMessage();
-        }
-    });
-    $("#send-shout-btn").on("click", openShoutModal);
-    $("#submit-shout-btn").on("click", sendShout);
-    $("#submit-daily-answer-btn").on("click", submitAnswer);
-    $("#open-secret-room-btn").on("click", () => {
-        window.location.href = "secret_room.html";
-    });
-
-
-  
-    $("#toggle-theme-btn").on("click", () => {
-        $("body").toggleClass("light dark");
-    });
-	
-	$("#toggle-message-input-btn").on("click", () => {
-        $("#message-input-container").removeClass("d-none-important");
-    });
-	
-    // Event Listeners (Bunlar doğru yerde)
-    $("#logout-btn").on("click", logout);
-    $("#send-message-btn").on("click", sendMessage);
-    $("#message-input").on("keypress", function (e) {
-        if (e.which == 13) {
-            sendMessage();
-        }
-    });
-    $("#shout-btn").on("click", openShoutModal);
-    $("#send-shout-btn").on("click", sendShout);
-    $("#submit-answer-btn").on("click", submitAnswer);
-    $("#secret-room-btn").on("click", () => {
-        window.location.href = "secret_room.html";
-    });
 });

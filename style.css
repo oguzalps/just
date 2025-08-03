@@ -304,3 +304,37 @@ body.light .btn-close {
 .d-none-important {
     display: none !important;
 }
+
+/* Pagination Nav için CSS */
+nav[aria-label="Mesaj Sayfalama"] {
+    position: relative; /* z-index'in çalışması için position değeri (relative, absolute, fixed vb.) olmalı */
+    z-index: 10; /* fixed-bottom-elements'ten daha yüksek bir değer */
+    /* İsteğe bağlı olarak, footer'ın üzerinde net görünmesi için biraz margin-bottom ekleyebiliriz */
+    margin-bottom: 10px; /* Ayarlanabilir */
+}
+
+/* fixed-bottom-elements için CSS */
+.fixed-bottom-elements {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 9; /* Pagination'dan daha düşük bir değer */
+    /* Diğer stilleriniz... */
+    background-color: white; /* Arka plan rengi eklemek örtülmeyi engeller */
+    padding: 1rem; /* Mevcut padding'i korur veya artırır */
+    box-shadow: 0 -2px 5px rgba(0,0,0,0.1); /* Hafif bir gölge eklenebilir */
+}
+
+/* Sayfa içeriğinin alt kısmında yeterli boşluk bırakmak için */
+body {
+    padding-bottom: 150px; /* fixed-bottom-elements ve pagination'ın kapladığı alana göre ayarla */
+    /* Eğer mesaj listesi içinde scroll varsa, bu padding body yerine #message-list'e veya sarmalayıcıya uygulanmalı */
+}
+
+#message-list {
+    padding-bottom: 30px; /* footer ve pagination yüksekliğine göre ayarla */
+    /* Eğer scrollbar sadece mesaj listesi içinde olsun istiyorsanız */
+   
+    /* Bu 250px değeri; üst bar, input alanı, footer ve pagination toplam yüksekliğine göre ayarlanmalı. */
+}

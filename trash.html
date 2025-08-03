@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tüm Kayıtları Sil</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #222;
+            color: #eee;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            background-color: #333;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        h1 {
+            color: #fff;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .btn-danger {
+            width: 100%;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Tüm Verileri Temizle</h1>
+        <p class="text-danger text-center mb-4">
+            **UYARI!** Bu işlem, tüm mesajları, haykırmaları, günlük soru cevaplarını **VE TÜM KULLANICI KAYITLARINI** tamamen siler. **Bu işlem geri alınamaz ve uygulamanın kullanıcı tabanını sıfırlar!**
+        </p>
+        
+        <button id="deleteAllRecordsAndUsersBtn" class="btn btn-danger btn-lg">TÜM KAYITLARI SİL (Kullanıcılar Dahil)</button>
+        
+        <hr>
+        <a href="index.html" class="btn btn-secondary w-100 mt-3">Ana Sayfaya Dön</a>
+    </div>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, collection, query, getDocs, writeBatch, doc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // Senin Firebase Config Bilgilerin
+        const firebaseConfig = {
+            apiKey: "AIzaSyApT5nPgxEDOA8iqkXlzo2QQGInS3TnhtU",
+            authDomain: "just-anonymous.firebaseapp.com",
+            projectId: "just-anonymous",
+            storageBucket: "just-anonymous.firebasestorage.app",
+            messagingSenderId: "419400824575",
+            appId: "1:419400824575:web:6b5f1c58d7af8a090efeca",
+            measurementId: "G-JS89445Z60"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUserUid = null; 
+
+        // Kullanıcının giriş yapıp yapmadığını kontrol et ve gerekirse anonim giriş yap
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUserUid = user.uid;
+                console.log("trash.html: Kullanıcı girişi algılandı, UID:", currentUserUid);
+            } else {
+                currentUserUid = null;
+                console.log("trash.html: Kullanıcı çıkış yapmış veya anonim olarak giriş yapmadı. Otomatik anonim giriş denemesi...");
+                try {
+                    const userCredential = await signInAnonymously(auth);
+                    currentUserUid = userCredential.user.uid;
+                    console.log("trash.html: Anonim olarak giriş yapıldı, UID:", currentUserUid);
+                } catch (error) {
+                    console.error("trash.html: Anonim giriş hatası:", error);
+                    alert("Giriş yapılırken hata oluştu, silme işlemi yapılamaz. Güvenlik kurallarını kontrol edin.");
+                }
+            }
+        });
+
+        /**
+         * Belirtilen koleksiyonlardaki tüm belgeleri siler.
+         * @param {string[]} collectionNames - Silinecek koleksiyon adlarının dizisi.
+         * @returns {Promise<number>} Silinen toplam belge sayısı.
+         */
+        async function deleteAllDocumentsInCollections(collectionNames) {
+            let totalDeletedDocs = 0;
+            for (const collectionName of collectionNames) {
+                console.log(`Koleksiyon '${collectionName}' temizleniyor...`);
+                const collectionRef = collection(db, collectionName);
+                const q = query(collectionRef); 
+                const querySnapshot = await getDocs(q);
+                
+                if (querySnapshot.empty) {
+                    console.log(`Koleksiyon '${collectionName}' içinde silinecek veri bulunamadı.`);
+                    continue;
+                }
+
+                const batch = writeBatch(db);
+                querySnapshot.docs.forEach((doc) => {
+                    batch.delete(doc.ref);
+                });
+
+                await batch.commit();
+                totalDeletedDocs += querySnapshot.size;
+                console.log(`${querySnapshot.size} adet belge '${collectionName}' koleksiyonundan başarıyla silindi.`);
+            }
+            return totalDeletedDocs;
+        }
+
+        /**
+         * Tüm veri koleksiyonlarını ve tüm kullanıcı kayıtlarını siler.
+         * Kullanıcıdan sadece tek bir onay alır.
+         */
+        async function deleteAllRecordsAndUsers() {
+            if (!currentUserUid) {
+                alert("Silme işlemi için giriş yapmış bir kullanıcı olmalı. Lütfen sayfayı yenileyin.");
+                return;
+            }
+
+            const confirmDelete = confirm("TÜM KAYITLARI VE KULLANICI LİSTESİNİ SİLMEK ÜZERESİN. BU İŞLEM GERİ ALINAMAZ! Emin misin?");
+            if (!confirmDelete) {
+                alert("İşlem iptal edildi.");
+                return;
+            }
+
+            try {
+                // Silinecek veri koleksiyonları
+                const dataCollections = ['messages', 'shouts', 'secret_room_messages', 'answers'];
+                const deletedDataCount = await deleteAllDocumentsInCollections(dataCollections);
+                console.log(`Toplam ${deletedDataCount} adet veri belgesi silindi.`);
+
+                // Kullanıcıları silme
+                console.log("Tüm kullanıcı kayıtları siliniyor...");
+                const usersRef = collection(db, "users");
+                const usersSnapshot = await getDocs(query(usersRef));
+                let deletedUsersCount = 0;
+
+                if (usersSnapshot.empty) {
+                    console.log("Silinecek kullanıcı bulunamadı.");
+                } else {
+                    const batch = writeBatch(db);
+                    usersSnapshot.docs.forEach((userDoc) => {
+                        batch.delete(userDoc.ref);
+                    });
+                    await batch.commit();
+                    deletedUsersCount = usersSnapshot.size;
+                    console.log(`${deletedUsersCount} adet kullanıcı kaydı başarıyla silindi.`);
+                }
+                
+                alert(`Tüm veriler (${deletedDataCount} belge) ve kullanıcı kayıtları (${deletedUsersCount} kullanıcı) başarıyla silindi! Uygulama sıfırlandı.`);
+                
+                // Silme işlemi sonrası kullanıcının mevcut oturumunu kapat ve sayfayı yenile
+                await signOut(auth);
+                console.log("Mevcut Firebase oturumu kapatıldı.");
+                window.location.reload(); 
+
+            } catch (error) {
+                console.error("Tüm verileri ve kullanıcıları silme işlemi sırasında hata oluştu:", error);
+                alert(`Tüm verileri ve kullanıcıları silme işlemi sırasında bir hata oluştu: ${error.message}. Güvenlik kurallarını kontrol edin.`);
+            }
+        }
+
+        // DOM yüklendikten sonra butona olay dinleyicisi ekle
+        document.addEventListener('DOMContentLoaded', () => {
+            const deleteAllRecordsAndUsersBtn = document.getElementById('deleteAllRecordsAndUsersBtn');
+            if (deleteAllRecordsAndUsersBtn) {
+                deleteAllRecordsAndUsersBtn.addEventListener('click', deleteAllRecordsAndUsers);
+            }
+        });
+
+    </script>
+</body>
+</html>
